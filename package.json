@@ -1,0 +1,27 @@
+{
+  "name": "miakapp-v3-server",
+  "version": "1.0.0",
+  "description": "Miakapp V3 server",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main",
+    "test": "node test",
+    "deploy": "pm2 deploy production"
+  },
+  "keywords": [
+    "Miakapp",
+    "V3",
+    "Server"
+  ],
+  "author": "Mathieu Colmon",
+  "license": "ISC",
+  "dependencies": {
+    "firebase-admin": "^9.6.0",
+    "websocket": "^1.0.34"
+  },
+  "devDependencies": {
+    "eslint": "^7.23.0",
+    "eslint-config-airbnb-base": "^14.2.1",
+    "eslint-plugin-import": "^2.22.1"
+  }
+}
