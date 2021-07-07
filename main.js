@@ -262,8 +262,9 @@ ws.on('connect', (socket) => {
     }
 
     if (msg.type === P_TYPES.USER.ACTION && client.type === 'USER') {
-      const [type, id, name, value] = miakode.array.decode(msg.data);
-      HOMES[client.homeID].emit('onUserAction', [client.clientID, type, id, name, value]);
+      const isInput = (msg.data[0] === '1');
+      const [id, name, value] = miakode.array.decode(msg.data.substring(1));
+      HOMES[client.homeID].emit('onUserAction', [client.clientID, (isInput ? 1 : 0), id, name, value]);
       return;
     }
 
