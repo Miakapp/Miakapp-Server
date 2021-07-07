@@ -44,7 +44,7 @@ exports.server.on('request', async (rq) => {
 
   if (!originHost || !originHost[2] || ![
     'dev.miakapp.com:8080',
-    'miakapp.web.app',
+    'miakapp-3.web.app',
     'beta.miakapp.com',
     'miakapp.com',
     'coordinator.miakapp',
