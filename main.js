@@ -303,7 +303,7 @@ ws.on('connect', (socket) => {
 
           const sendHomeUsers = () => {
             const users = HOMES[client.homeID].fRelations.map((r) => {
-              const gNs = r.groups.map((id) => {
+              const gNs = (!r.groups) ? [] : r.groups.map((id) => {
                 const group = HOMES[homeID].fGroups.find((g) => g.id === id);
                 return (group && group.name) ? group.name : null;
               }).filter((g) => g);
