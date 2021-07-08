@@ -283,7 +283,7 @@ ws.on('connect', (socket) => {
         const coordDoc = homeDoc.collection('coordinators').doc(coordID);
         const fCoord = await coordDoc.get();
         if (fCoord.exists && fCoord.data().secret === sha256(coordSecret)) {
-          coordDoc.update({ lastDate: Date.now() });
+          coordDoc.update({ lastDate: firebase.firestore.FieldValue.serverTimestamp() });
 
           client.homeID = homeID;
           client.clientID = coordID;
