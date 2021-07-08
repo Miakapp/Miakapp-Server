@@ -349,8 +349,8 @@ ws.on('connect', (socket) => {
     if (msg.type === P_TYPES.COORD.NOTIF && client.type === 'COORD') {
       const [userID, title, body, tag, image] = miakode.array.decode(msg.data);
 
-      (await db.collection('users').doc(userID).collection('pushTokens').get()).forEach((token) => {
-        console.log('SEND NOTIF', [userID, title, body, tag, image]);
+      (await db.collection('users').doc(userID).collection('pushTokens').get()).forEach(({ id: token }) => {
+        console.log('SEND NOTIF', [userID, title, body, tag, image], 'to', token);
         fcm.send({
           token,
           data: {
@@ -358,7 +358,7 @@ ws.on('connect', (socket) => {
             body,
             tag,
             image,
-            timestamp: Date.now(),
+            timestamp: Date.now().toString(),
           },
         }).catch(() => {
           db.collection('users')
