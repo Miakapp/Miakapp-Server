@@ -9,7 +9,6 @@ const credentials = process.env.credentials
 global.firebase = firebase;
 firebase.initializeApp({
   credential: firebase.credential.cert(credentials),
-  databaseURL: process.env.DB_URL || 'https://miakapp-v2.firebaseio.com',
 });
 
 const miakode = require('./miakode');
