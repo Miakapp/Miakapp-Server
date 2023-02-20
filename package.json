@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node main",
     "test": "node test",
-    "deploy": "docker-compose up -d"
+    "deploy": "docker compose up -d"
   },
   "keywords": [
     "Miakapp",
