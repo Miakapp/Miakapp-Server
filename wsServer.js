@@ -1,5 +1,6 @@
 const WebSocketServer = require('websocket').server;
 const http = require('http');
+const { log, debug } = require('./log');
 
 let incomming = {};
 setInterval(() => {
@@ -22,13 +23,13 @@ exports.server = new WebSocketServer({
 
 exports.server.on('request', async (rq) => {
   const ip = rq.remoteAddresses.join('@');
-  console.log('Connect', ip);
+  debug('Connect', ip);
 
   if (
     incomming[ip]
     && (Date.now() - incomming[ip].last) < (5000 / incomming[ip].i)
   ) {
-    console.log('Banned IP', ip);
+    log('Banned IP', ip);
     rq.reject(403);
     return;
   }
@@ -38,7 +39,7 @@ exports.server.on('request', async (rq) => {
   incomming[ip].l += 1;
 
   if (!rq.origin || !rq.origin.includes('/')) {
-    console.log('Wrong request: no origin', rq.origin);
+    log('Wrong request: no origin', rq.origin);
     rq.reject(400);
     return;
   }
@@ -52,7 +53,7 @@ exports.server.on('request', async (rq) => {
     'miakapp.com',
     'coordinator.miakapp',
   ].includes(originHost[2])) {
-    console.log('Wrong origin', originHost);
+    log('Wrong origin', originHost);
     rq.reject(400);
     return;
   }

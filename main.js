@@ -5,6 +5,7 @@ firebase.initializeApp({
   credential: firebase.credential.cert(config.FIREBASE_CREDENTIAL),
 });
 
+const { log, debug } = require('./log');
 const miakode = require('./miakode');
 const sha256 = require('./sha256');
 const ws = require('./wsServer').server;
@@ -20,13 +21,11 @@ function setState() {
   });
 }
 
-const debug = (config.DEBUG ? console.log : () => null);
-
 if (config.SERVER_URL && config.SERVER_NAME) {
-  console.log(`Server URL: ${config.SERVER_URL}`);
+  log(`Server URL: ${config.SERVER_URL}`);
   setState();
   setInterval(setState, 1800000); // 1800000ms = 30min = 48/day
-} else console.log('Server has no URL');
+} else log('Server has no URL');
 
 /** @enum @const */
 const P_TYPES = {
@@ -161,7 +160,7 @@ const HOMES = {};
 
 let incrementer = 0;
 
-console.log('Ready !');
+log('Ready !');
 ws.on('connect', (socket) => {
   incrementer += 1;
 
@@ -401,7 +400,7 @@ ws.on('connect', (socket) => {
       return;
     }
 
-    console.log('Unknown packet', msg);
+    log('Unknown packet', msg);
   });
 
   let pingPayload = null;
