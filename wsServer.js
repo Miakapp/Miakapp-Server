@@ -24,7 +24,10 @@ exports.server.on('request', async (rq) => {
   const ip = rq.remoteAddresses.join('@');
   console.log('Connect', ip);
 
-  if (incomming[ip] && (Date.now() - incomming[ip].last) < (5000 / incomming[ip].i)) {
+  if (
+    incomming[ip]
+    && (Date.now() - incomming[ip].last) < (5000 / incomming[ip].i)
+  ) {
     console.log('Banned IP', ip);
     rq.reject(403);
     return;

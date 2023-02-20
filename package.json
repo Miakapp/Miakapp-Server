@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node main",
     "test": "node test",
-    "deploy": "pm2 deploy production"
+    "deploy": "docker-compose up -d"
   },
   "keywords": [
     "Miakapp",

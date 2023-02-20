@@ -1,14 +1,8 @@
-require('./envLoader');
-
 const firebase = require('firebase-admin');
-
-const credentials = process.env.credentials
-  ? JSON.parse(process.env.credentials)
-  : require('./firebaseCredentials.json');
-
+const config = require('./config/miakapp-server');
 global.firebase = firebase;
 firebase.initializeApp({
-  credential: firebase.credential.cert(credentials),
+  credential: firebase.credential.cert(config.FIREBASE_CREDENTIAL),
 });
 
 const miakode = require('./miakode');
@@ -20,14 +14,14 @@ const db = firebase.firestore();
 const fcm = firebase.messaging();
 
 function setState() {
-  db.collection('SERVERS').doc(process.env.SERVER_URL).set({
-    name: process.env.SERVER_NAME,
+  db.collection('SERVERS').doc(config.SERVER_URL).set({
+    name: config.SERVER_NAME,
     last: Date.now(),
   });
 }
 
-if (process.env.SERVER_URL && process.env.SERVER_NAME) {
-  console.log(`Server URL: ${process.env.SERVER_URL}`);
+if (config.SERVER_URL && config.SERVER_NAME) {
+  console.log(`Server URL: ${config.SERVER_URL}`);
   setState();
   setInterval(setState, 1800000); // 1800000ms = 30min = 48/day
 } else console.log('Server has no URL');

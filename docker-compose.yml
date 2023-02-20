@@ -1,0 +1,14 @@
+version: '2.1'
+services:
+  miakapp-server:
+    image: miakapp-server
+    build: .
+    pull_policy: build
+    container_name: miakapp-server
+    volumes:
+      - miakapp-server-config:/app/config
+    ports:
+      - 3000:3000
+    restart: unless-stopped
+volumes:
+  miakapp-server-config:
