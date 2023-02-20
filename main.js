@@ -20,6 +20,8 @@ function setState() {
   });
 }
 
+const debug = (config.DEBUG ? console.log : () => null);
+
 if (config.SERVER_URL && config.SERVER_NAME) {
   console.log(`Server URL: ${config.SERVER_URL}`);
   setState();
@@ -69,7 +71,7 @@ const P_TYPES = {
 
 function sendPacket(socket, type, data = '') {
   socket.sendBytes(Buffer.from(`${type}${data}`));
-  console.log(type);
+  debug(type);
 }
 
 function parsePacket(packet) {
@@ -139,13 +141,13 @@ function Home(homeID) {
   const unsubGroups = groupsDoc.onSnapshot((snapshot) => {
     this.fGroups = snapshot.docs.map((a) => ({ id: a.id, ...a.data() }));
     if (this.fRelations.length > 0) this.emit('onHomeUpdate');
-    console.log('Groups changes');
+    debug('Groups changes');
   });
 
   const unsubUsers = homeUsers.onSnapshot((snapshot) => {
     this.fRelations = snapshot.docs.map((a) => ({ id: a.id, ...a.data() }));
     if (this.fGroups.length > 0) this.emit('onHomeUpdate');
-    console.log('Users changes');
+    debug('Users changes');
   });
 
   this.destroy = () => {
@@ -185,7 +187,7 @@ ws.on('connect', (socket) => {
 
     // USER AUTHENTICATION
     if (msg.type === P_TYPES.AUTH.USER && !client.type) {
-      console.log('Auth user');
+      debug('Auth user');
       const [homeID, userID, userToken] = miakode.array.decode(msg.data);
       if (!homeID || !userID || !userToken) {
         socket.close(4002, 'WRONG_REQUEST');
@@ -206,8 +208,8 @@ ws.on('connect', (socket) => {
         }
 
         if (!HOMES[homeID]) {
-          console.log(HOMES);
           socket.close(4003, 'NO_COORDINATOR');
+          debug(HOMES);
           return;
         }
 
@@ -224,7 +226,10 @@ ws.on('connect', (socket) => {
 
         function sendVariables() {
           const userVariables = {};
-          const ugNames = uGroups.map((id) => (HOMES[homeID].fGroups.find((g) => g.id === id) || { name: 'NONE' }).name);
+          const ugNames = uGroups.map((id) => (
+            HOMES[homeID].fGroups.find((g) => g.id === id)
+            || { name: 'NONE' }
+          ).name);
 
           Object.keys(HOMES[homeID].variables).forEach((k) => {
             const namespace = k.split('.')[0];
@@ -232,9 +237,9 @@ ws.on('connect', (socket) => {
               userVariables[k] = HOMES[homeID].variables[k];
             }
           });
-          console.log('HomeVariables', HOMES[homeID].variables);
-          console.log('UserVariables', userVariables);
           sendPacket(socket, P_TYPES.USER.DATA, miakode.object.encode(userVariables));
+          debug('HomeVariables', HOMES[homeID].variables);
+          debug('UserVariables', userVariables);
         }
 
         HOMES[homeID].subscribe(client.socketID, 'onData', sendVariables);
@@ -245,9 +250,9 @@ ws.on('connect', (socket) => {
         });
 
         HOMES[client.homeID].emit('onUserEvent', userID, client.socketID, '1');
-        console.log('=>', client);
+        debug('=>', client);
       }).catch((e) => {
-        console.log(e);
+        debug(e);
         socket.close(4001, 'WRONG_CREDENTIALS');
       });
 
@@ -257,13 +262,16 @@ ws.on('connect', (socket) => {
     if (msg.type === P_TYPES.USER.ACTION && client.type === 'USER') {
       const isInput = (msg.data[0] === '1');
       const [id, name, value] = miakode.array.decode(msg.data.substring(1));
-      HOMES[client.homeID].emit('onUserAction', [client.clientID, (isInput ? 1 : 0), id, name, value]);
+      HOMES[client.homeID].emit(
+        'onUserAction',
+        [client.clientID, (isInput ? 1 : 0), id, name, value],
+      );
       return;
     }
 
     // COORDINATOR AUTHENTICATION
     if (msg.type === P_TYPES.AUTH.COORD && !client.type) {
-      console.log('Auth coord');
+      debug('Auth coord');
       const [homeID, coordID, coordSecret] = miakode.array.decode(msg.data);
       if (!homeID || !coordID || !coordSecret) {
         socket.close(4002, 'WRONG_REQUEST');
@@ -282,7 +290,7 @@ ws.on('connect', (socket) => {
           client.clientID = coordID;
           client.type = 'COORD';
 
-          console.log('=>', client);
+          debug('=>', client);
 
           if (!HOMES[client.homeID]) {
             HOMES[client.homeID] = new Home(client.homeID);
@@ -300,7 +308,12 @@ ws.on('connect', (socket) => {
                 const group = HOMES[homeID].fGroups.find((g) => g.id === id);
                 return (group && group.name) ? group.name : null;
               }).filter((g) => g);
-              return `${r.isAdmin ? '1' : '0'}${r.notifications ? '1' : '0'}${r.user}\x01${r.displayName}\x01${gNs.join('\x02')}`;
+              return `${r.isAdmin ? '1' : '0'
+                }${r.notifications ? '1' : '0'
+                }${r.user
+                }\x01${r.displayName
+                }\x01${gNs.join('\x02')
+              }`;
             }).join('\x00');
 
             sendPacket(socket, P_TYPES.COORD.USERLIST, users);
@@ -309,17 +322,21 @@ ws.on('connect', (socket) => {
           HOMES[client.homeID].subscribe(client.socketID, 'onHomeUpdate', sendHomeUsers);
           sendHomeUsers();
 
-          HOMES[client.homeID].subscribe(client.socketID, 'onUserEvent', (userID, socketID, event) => {
-            console.log('onUserEvent', userID, socketID, event);
-            sendPacket(
-              socket,
-              P_TYPES.COORD.USER_CONNECT,
-              miakode.string.encode(`${event}${socketID}@${userID}`),
-            );
-          });
+          HOMES[client.homeID].subscribe(
+            client.socketID,
+            'onUserEvent',
+            (userID, socketID, event) => {
+              debug('onUserEvent', userID, socketID, event);
+              sendPacket(
+                socket,
+                P_TYPES.COORD.USER_CONNECT,
+                miakode.string.encode(`${event}${socketID}@${userID}`),
+              );
+            },
+          );
 
           HOMES[client.homeID].subscribe(client.socketID, 'onUserAction', (action) => {
-            console.log('onUserAction', action);
+            debug('onUserAction', action);
             sendPacket(socket, P_TYPES.COORD.USER_ACTION, miakode.array.encode(action));
           });
 
@@ -335,15 +352,28 @@ ws.on('connect', (socket) => {
       HOMES[client.homeID].variables = miakode.object.decode(msg.data);
       HOMES[client.homeID].emit('onData');
 
-      console.log('COMMIT DATA', HOMES[client.homeID].variables);
+      debug('COMMIT DATA', HOMES[client.homeID].variables);
       return;
     }
 
     if (msg.type === P_TYPES.COORD.NOTIF && client.type === 'COORD') {
       const [userID, title, body, tag, image] = miakode.array.decode(msg.data);
 
-      (await db.collection('users').doc(userID).collection('pushTokens').get()).forEach(({ id: token }) => {
-        console.log('SEND NOTIF', [userID, title, body, tag, image], 'to', token);
+      (
+        await (db
+          .collection('users')
+          .doc(userID)
+          .collection('pushTokens')
+          .get()
+        )
+      ).forEach(({ id: token }) => {
+        debug(
+          'SEND NOTIF',
+          [userID, title, body, tag, image],
+          'to',
+          token,
+        );
+
         fcm.send({
           token,
           data: {
@@ -377,13 +407,13 @@ ws.on('connect', (socket) => {
   let pingPayload = null;
   let pingTime = null;
   const pingInterval = setInterval(() => {
-    console.log('ping');
+    debug('ping');
     if (!client.type || pingPayload !== pongPayload) {
       socket.close(4000, 'TIMEOUT');
       return;
     }
 
-    if (pongTime) console.log('Ping', pongTime - pingTime, 'ms');
+    if (pongTime) debug('Ping', pongTime - pingTime, 'ms');
 
     pingPayload = genPayload();
     pingTime = Date.now();
@@ -391,13 +421,17 @@ ws.on('connect', (socket) => {
   }, 5000);
 
   socket.on('close', (code, desc) => {
-    console.log('DISCONNECT', code, desc);
+    debug('DISCONNECT', code, desc);
     clearInterval(pingInterval);
 
     if (client.homeID && HOMES[client.homeID]) {
-      console.log('Remove listeners', client.socketID, HOMES[client.homeID].listeners[client.socketID]);
+      debug(
+        'Remove listeners',
+        client.socketID,
+        HOMES[client.homeID].listeners[client.socketID]
+      );
       HOMES[client.homeID].removeListeners(client.socketID);
-      console.log(HOMES[client.homeID].listeners);
+      debug(HOMES[client.homeID].listeners);
     }
   });
 });
