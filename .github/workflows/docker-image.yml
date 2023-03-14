@@ -18,5 +18,5 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     - name: Build the hello-docker Docker image
       run: |
-           docker build . --tag ghcr.io/miakapp/miakapp-server:latest
-           docker push ghcr.io/miakapp/miakapp-server:latest
+        docker build . --tag ghcr.io/miakapp/miakapp-server:latest
+        docker push ghcr.io/miakapp/miakapp-server:latest
