@@ -1,14 +1,15 @@
 const firebase = require('firebase-admin');
-const config = require('./config/miakapp-server');
+const config = require('./src/config');
+
 global.firebase = firebase;
 firebase.initializeApp({
-  credential: firebase.credential.cert(config.FIREBASE_CREDENTIAL),
+  credential: firebase.credential.cert(config.FIREBASE_CREDENTIALS),
 });
 
-const { log, debug } = require('./log');
-const miakode = require('./miakode');
-const sha256 = require('./sha256');
-const ws = require('./wsServer').server;
+const { log, debug } = require('./src/log');
+const miakode = require('./src/miakode');
+const sha256 = require('./src/sha256');
+const ws = require('./src/wsServer').server;
 
 const auth = firebase.auth();
 const db = firebase.firestore();
@@ -307,11 +308,16 @@ ws.on('connect', (socket) => {
                 const group = HOMES[homeID].fGroups.find((g) => g.id === id);
                 return (group && group.name) ? group.name : null;
               }).filter((g) => g);
-              return `${r.isAdmin ? '1' : '0'
-                }${r.notifications ? '1' : '0'
-                }${r.user
-                }\x01${r.displayName
-                }\x01${gNs.join('\x02')
+              return `${
+                r.isAdmin ? '1' : '0'
+              }${
+                r.notifications ? '1' : '0'
+              }${
+                r.user
+              }\x01${
+                r.displayName
+              }\x01${
+                gNs.join('\x02')
               }`;
             }).join('\x00');
 
@@ -427,7 +433,7 @@ ws.on('connect', (socket) => {
       debug(
         'Remove listeners',
         client.socketID,
-        HOMES[client.homeID].listeners[client.socketID]
+        HOMES[client.homeID].listeners[client.socketID],
       );
       HOMES[client.homeID].removeListeners(client.socketID);
       debug(HOMES[client.homeID].listeners);

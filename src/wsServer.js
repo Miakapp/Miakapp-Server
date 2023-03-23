@@ -47,11 +47,11 @@ exports.server.on('request', async (rq) => {
   const originHost = rq.origin.split('/');
 
   if (!originHost || !originHost[2] || ![
-    'dev.miakapp.com:8080',
-    'miakapp-3.web.app',
-    'beta.miakapp.com',
     'miakapp.com',
     'coordinator.miakapp',
+    'miakapp-3.web.app',
+    'beta.miakapp.com',
+    'dev.miakapp.com:8080',
   ].includes(originHost[2])) {
     log('Wrong origin', originHost);
     rq.reject(400);
