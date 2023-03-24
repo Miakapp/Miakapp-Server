@@ -76,4 +76,4 @@ module.exports = function sha256(asciiIn) {
   }
 
   return result;
-}
+};
