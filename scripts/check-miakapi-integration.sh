@@ -24,7 +24,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-go run ./test/fixture-server >"$fixture_directory/metadata.json" 2>"$fixture_directory/fixture.err" &
+fixture_binary=$fixture_directory/fixture-server
+go build -trimpath -o "$fixture_binary" ./test/fixture-server
+"$fixture_binary" >"$fixture_directory/metadata.json" 2>"$fixture_directory/fixture.err" &
 fixture_pid=$!
 
 attempt=0
