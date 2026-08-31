@@ -1,14 +1,16 @@
-version: '2.1'
 services:
   miakapp-server:
-    image: miakapp-server
+    image: miakapp-server:development
     build: .
-    pull_policy: build
     container_name: miakapp-server
-    volumes:
-      - miakapp-server-config:/app/config
+    environment:
+      MIAKAPP_ALLOWED_ORIGINS: ${MIAKAPP_ALLOWED_ORIGINS:-}
+      MIAKAPP_LISTEN_ADDRESS: :3000
     ports:
-      - 3000:3000
+      - '3000:3000'
+    cap_drop:
+      - ALL
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
-volumes:
-  miakapp-server-config:

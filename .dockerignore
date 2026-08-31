@@ -1,3 +1,12 @@
-node_modules
-npm-debug.log
-config/
+.git
+.github
+.devcontainer
+.env
+.vscode
+Dockerfile
+README.md
+coverage.out
+docker-compose.yml
+miakapp-server
+scripts
+test
