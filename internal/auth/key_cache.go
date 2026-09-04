@@ -73,7 +73,7 @@ func (cache *keyCache) current(ctx context.Context) ([]controlplane.PublicJWK, e
 	return cache.load(ctx, false)
 }
 
-func (cache *keyCache) refreshUnknownKID(ctx context.Context) ([]controlplane.PublicJWK, bool, error) {
+func (cache *keyCache) refreshUnknownKID(ctx context.Context) ([]controlplane.PublicJWK, error) {
 	cache.mu.Lock()
 	now := cache.now()
 	if len(cache.keys) > 0 &&
@@ -82,12 +82,11 @@ func (cache *keyCache) refreshUnknownKID(ctx context.Context) ([]controlplane.Pu
 		now.Before(cache.nextUnknownRefresh) {
 		keys := cloneKeys(cache.keys)
 		cache.mu.Unlock()
-		return keys, false, nil
+		return keys, nil
 	}
 	cache.mu.Unlock()
 
-	keys, err := cache.load(ctx, true)
-	return keys, err == nil, err
+	return cache.load(ctx, true)
 }
 
 func (cache *keyCache) load(ctx context.Context, force bool) ([]controlplane.PublicJWK, error) {

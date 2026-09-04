@@ -34,10 +34,8 @@ type controlMetadata struct {
 }
 
 type relayMetadata struct {
-	Schema          string `json:"schema"`
-	RelayURL        string `json:"relayUrl"`
-	ControlEndpoint string `json:"controlEndpoint"`
-	VerifyEndpoint  string `json:"verifyEndpoint"`
+	Schema   string `json:"schema"`
+	RelayURL string `json:"relayUrl"`
 }
 
 type probeEvidence struct {
@@ -437,7 +435,6 @@ func main() {
 		panic(err)
 	}
 	relayURL := "wss://" + listener.Addr().String() + "/ws"
-	fixtureURL := "https://" + listener.Addr().String()
 	certificatePEM, err := os.ReadFile(certificateFile)
 	if err != nil {
 		panic(err)
@@ -507,10 +504,8 @@ func main() {
 		serveFailure <- server.ServeTLS(listener, certificateFile, privateKeyFile)
 	}()
 	if err = writeJSON(relayMetadataFile, relayMetadata{
-		Schema:          "miakapp.relay-integration-relay/1",
-		RelayURL:        relayURL,
-		ControlEndpoint: fixtureURL + "/__integration/control",
-		VerifyEndpoint:  fixtureURL + "/__integration/verify",
+		Schema:   "miakapp.relay-integration-relay/1",
+		RelayURL: relayURL,
 	}); err != nil {
 		panic(err)
 	}

@@ -89,14 +89,11 @@ func (verifier *PlatformVerifier) verifyAccess(
 	}
 	identity, verifyErr := verifier.verifyMiakappToken(request.Token, profile, keys)
 	if controlplane.VerificationCode(verifyErr) == controlplane.UnknownKID {
-		var refreshed bool
-		keys, refreshed, err = verifier.controlKeys.refreshUnknownKID(ctx)
+		keys, err = verifier.controlKeys.refreshUnknownKID(ctx)
 		if err != nil {
 			return Identity{}, Failure(ErrTemporary, err)
 		}
-		if refreshed {
-			identity, verifyErr = verifier.verifyMiakappToken(request.Token, profile, keys)
-		}
+		identity, verifyErr = verifier.verifyMiakappToken(request.Token, profile, keys)
 	}
 	if verifyErr != nil {
 		return Identity{}, verificationFailureForContract(verifyErr)
@@ -138,14 +135,11 @@ func (verifier *PlatformVerifier) verifyFirebase(ctx context.Context, request Re
 	}
 	identity, verifyErr := verifier.verifyFirebaseToken(request.Token, keys)
 	if controlplane.VerificationCode(verifyErr) == controlplane.UnknownKID {
-		var refreshed bool
-		keys, refreshed, err = verifier.firebaseKeys.refreshUnknownKID(ctx)
+		keys, err = verifier.firebaseKeys.refreshUnknownKID(ctx)
 		if err != nil {
 			return Identity{}, Failure(ErrTemporary, err)
 		}
-		if refreshed {
-			identity, verifyErr = verifier.verifyFirebaseToken(request.Token, keys)
-		}
+		identity, verifyErr = verifier.verifyFirebaseToken(request.Token, keys)
 	}
 	if verifyErr != nil {
 		return Identity{}, verificationFailureForContract(verifyErr)

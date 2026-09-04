@@ -277,6 +277,63 @@ func TestUnknownKIDRefreshIsRateLimited(t *testing.T) {
 	}
 }
 
+func TestPlatformVerifierReverifiesKeysReturnedByACompletedUnknownKIDRefresh(t *testing.T) {
+	fixture := newVerifierFixture(t)
+	now := fixture.clock.read()
+	futureSeed := sha256.Sum256([]byte("miakapp-relay-future-verifier-test-key"))
+	futurePrivate := ed25519.NewKeyFromSeed(futureSeed[:])
+	futurePublic := futurePrivate.Public().(ed25519.PublicKey)
+	futureKey := controlplane.PublicJWK{
+		KTY: "OKP", KID: "future-control-key", Use: "sig", Alg: "EdDSA", CRV: "Ed25519",
+		X: base64.RawURLEncoding.EncodeToString(futurePublic),
+	}
+	token := compactToken(t,
+		map[string]any{"alg": "EdDSA", "kid": futureKey.KID, "typ": "at+jwt"},
+		map[string]any{
+			"iss": fixture.server.URL, "sub": "synthetic-home", "aud": "wss://relay.example.test/ws",
+			"exp": now.Unix() + 300, "iat": now.Unix(), "jti": testTokenID,
+			"client_id": testClientID, "scope": "relay:coordinator",
+			"miakapp_role": "coordinator", "miakapp_coordinator": "automation",
+		},
+		func(input []byte) []byte { return ed25519.Sign(futurePrivate, input) },
+	)
+	oldPublic := fixture.controlPrivate.Public().(ed25519.PublicKey)
+	fixture.verifier.controlKeys.mu.Lock()
+	fixture.verifier.controlKeys.keys = []controlplane.PublicJWK{{
+		KTY: "OKP", KID: testControlKID, Use: "sig", Alg: "EdDSA", CRV: "Ed25519",
+		X: base64.RawURLEncoding.EncodeToString(oldPublic),
+	}}
+	fixture.verifier.controlKeys.expiresAt = now.Add(time.Minute)
+	fixture.verifier.controlKeys.mu.Unlock()
+
+	var clockCalls atomic.Int64
+	racingClock := func() time.Time {
+		// The third clock read happens under the cache lock after initial token
+		// verification. Model another caller having just completed the refresh.
+		if clockCalls.Add(1) == 3 {
+			fixture.verifier.controlKeys.keys = []controlplane.PublicJWK{futureKey}
+			fixture.verifier.controlKeys.expiresAt = now.Add(time.Minute)
+			fixture.verifier.controlKeys.nextUnknownRefresh = now.Add(unknownKIDRefreshDelay)
+		}
+		return now
+	}
+	fixture.verifier.now = racingClock
+	fixture.verifier.controlKeys.now = racingClock
+
+	identity, err := fixture.verifier.Verify(context.Background(), Request{
+		Role: RoleCoordinator, Token: token, CoordinatorName: "automation",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.HomeID != "synthetic-home" || identity.ClientID != testClientID {
+		t.Fatalf("unexpected identity after completed refresh: %#v", identity)
+	}
+	if fixture.controlFetches.Load() != 0 {
+		t.Fatalf("completed refresh unexpectedly fetched JWKS %d times", fixture.controlFetches.Load())
+	}
+}
+
 func TestExpiredKeyCacheFailureIsTemporaryAndRetryBounded(t *testing.T) {
 	fixture := newVerifierFixture(t)
 	request := Request{
