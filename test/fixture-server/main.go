@@ -28,6 +28,7 @@ func (verifier) Verify(_ context.Context, request auth.Request) (auth.Identity, 
 			Role:            auth.RoleCoordinator,
 			HomeID:          "integration-home",
 			ID:              "integration-home",
+			ClientID:        "integration-client",
 			CoordinatorName: "integration",
 			ExpiresAt:       expiresAt,
 		}, nil

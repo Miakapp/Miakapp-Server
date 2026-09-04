@@ -15,6 +15,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out the pinned control-plane contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Miakapp/Miakapp-V3
+          ref: abee78b80383f0e7c900dbcaede3741095f08c35
+          path: .contract/miakapp-v3
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.6'
@@ -22,11 +28,13 @@ jobs:
       - name: Verify module contents
         run: go mod verify
       - name: Check formatting
-        run: test -z "$(gofmt -l .)"
+        run: test -z "$(gofmt -l cmd internal test)"
       - name: Vet packages
         run: go vet ./...
       - name: Run race-enabled tests
         run: go test -race -coverprofile=coverage.out ./...
+      - name: Run the canonical control-plane authentication vectors
+        run: ./scripts/check-control-plane-integration.sh "$GITHUB_WORKSPACE/.contract/miakapp-v3"
       - name: Build relay binary
         run: go build ./cmd/miakapp-server
 

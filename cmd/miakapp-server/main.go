@@ -26,8 +26,18 @@ func run() int {
 		logger.Error("Invalid relay configuration", "error", err)
 		return 1
 	}
+	authConfig, err := auth.LoadPlatformConfig()
+	if err != nil {
+		logger.Error("Invalid authentication configuration", "error", err)
+		return 1
+	}
+	verifier, err := auth.NewPlatformVerifier(authConfig)
+	if err != nil {
+		logger.Error("Unable to initialize authentication", "error", err)
+		return 1
+	}
 
-	engine, err := relay.New(cfg, auth.RejectingVerifier{}, logger)
+	engine, err := relay.New(cfg, verifier, logger)
 	if err != nil {
 		logger.Error("Unable to initialize relay", "error", err)
 		return 1
@@ -43,11 +53,11 @@ func run() int {
 	serveFailure := make(chan error, 1)
 	go func() {
 		logger.Info(
-			"Miakapp relay preview is listening",
+			"Miakapp relay is listening",
 			"address",
 			cfg.ListenAddress,
 			"authentication",
-			"reject_all_until_control_plane_contract",
+			"platform_jwks_and_firebase",
 		)
 		serveFailure <- httpServer.ListenAndServe()
 	}()
