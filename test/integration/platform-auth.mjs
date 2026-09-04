@@ -31,49 +31,93 @@ if ([
   );
 }
 
+function isExactObject(value, keys) {
+  return value !== null
+    && !Array.isArray(value)
+    && typeof value === 'object'
+    && Object.keys(value).length === keys.length
+    && keys.every((key) => Object.hasOwn(value, key));
+}
+
 function exactObject(value, keys, description) {
-  if (value === null
-    || Array.isArray(value)
-    || typeof value !== 'object'
-    || Object.keys(value).length !== keys.length
-    || keys.some((key) => !Object.hasOwn(value, key))) {
+  if (!isExactObject(value, keys)) {
     throw new Error(`${description} is invalid`);
   }
   return value;
 }
 
+function loopbackURL(value, protocol, pathname, description) {
+  if (typeof value !== 'string') throw new Error(`${description} is invalid`);
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`${description} is invalid`);
+  }
+  if (parsed.protocol !== protocol
+    || parsed.hostname !== '127.0.0.1'
+    || parsed.port === ''
+    || parsed.username !== ''
+    || parsed.password !== ''
+    || parsed.pathname !== pathname
+    || parsed.search !== ''
+    || parsed.hash !== '') {
+    throw new Error(`${description} is invalid`);
+  }
+  return parsed;
+}
+
 function jsonFile(file, schema) {
   const value = JSON.parse(readFileSync(file, 'utf8'));
-  if (value === null || Array.isArray(value) || typeof value !== 'object' || value.schema !== schema) {
+  if (value === null
+    || Array.isArray(value)
+    || typeof value !== 'object'
+    || value.schema !== schema) {
     throw new Error('Platform integration file is invalid');
   }
   return value;
 }
 
-const control = exactObject(
-  jsonFile(controlMetadataFile, 'miakapp.relay-integration-control/1'),
-  ['schema', 'controlUrl', 'controlEndpoint', 'exchangeEndpoint', 'jwksUrl'],
-  'Control-plane metadata',
-);
+const rawControl = jsonFile(controlMetadataFile, 'miakapp.relay-integration-control/1');
+const canonicalControlKeys = ['schema', 'controlUrl', 'exchangeEndpoint', 'jwksUrl'];
+const transitionalControlKeys = [...canonicalControlKeys, 'controlEndpoint'];
+if (!isExactObject(rawControl, canonicalControlKeys)
+  && !isExactObject(rawControl, transitionalControlKeys)) {
+  throw new Error('Control-plane metadata is invalid');
+}
+const control = rawControl;
 const relay = exactObject(
   jsonFile(relayMetadataFile, 'miakapp.relay-integration-relay/1'),
-  ['schema', 'relayUrl', 'controlEndpoint', 'verifyEndpoint'],
+  ['schema', 'relayUrl'],
   'Relay metadata',
 );
+const controlURL = loopbackURL(control.controlUrl, 'https:', '/', 'Control-plane URL');
+const exchangeURL = loopbackURL(
+  control.exchangeEndpoint,
+  'https:',
+  '/v1/access-tokens:exchange',
+  'Control-plane exchange URL',
+);
+const jwksURL = loopbackURL(
+  control.jwksUrl,
+  'https:',
+  '/.well-known/jwks.json',
+  'Control-plane JWKS URL',
+);
+const relayURL = loopbackURL(relay.relayUrl, 'wss:', '/ws', 'Relay URL');
+if (exchangeURL.origin !== controlURL.origin || jwksURL.origin !== controlURL.origin) {
+  throw new Error('Control-plane metadata origins are inconsistent');
+}
+const controlEndpoint = `${controlURL.origin}/__integration/control`;
+const relayControlEndpoint = `https://${relayURL.host}/__integration/control`;
+const relayVerifyEndpoint = `https://${relayURL.host}/__integration/verify`;
+if (Object.hasOwn(control, 'controlEndpoint') && control.controlEndpoint !== controlEndpoint) {
+  throw new Error('Transitional control-plane metadata is inconsistent');
+}
 const homeKey = readFileSync(homeKeyFile, 'ascii');
 const controlSecret = readFileSync(controlSecretFile, 'ascii').trim();
 const relaySecret = readFileSync(relaySecretFile, 'ascii').trim();
-if (typeof control.exchangeEndpoint !== 'string'
-  || typeof control.controlEndpoint !== 'string'
-  || typeof relay.relayUrl !== 'string'
-  || typeof relay.controlEndpoint !== 'string'
-  || typeof relay.verifyEndpoint !== 'string'
-  || !control.controlEndpoint.startsWith('https://127.0.0.1:')
-  || !relay.controlEndpoint.startsWith('https://127.0.0.1:')
-  || !relay.verifyEndpoint.startsWith('https://127.0.0.1:')
-  || !relay.relayUrl.startsWith('wss://127.0.0.1:')
-  || !relay.relayUrl.endsWith('/ws')
-  || !/^mhk1_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{43}$/.test(homeKey)
+if (!/^mhk1_[A-Za-z0-9_-]{22}_[A-Za-z0-9_-]{43}$/.test(homeKey)
   || !/^[0-9a-f]{64}$/.test(controlSecret)
   || !/^[0-9a-f]{64}$/.test(relaySecret)) {
   throw new Error('Platform integration inputs are invalid');
@@ -127,7 +171,7 @@ function fixtureRequest(endpoint, secret, body) {
 }
 
 async function controlAction(action) {
-  const response = await fixtureRequest(control.controlEndpoint, controlSecret, { action });
+  const response = await fixtureRequest(controlEndpoint, controlSecret, { action });
   assert.equal(response.status, 200, `Control action ${action} failed`);
   return response.value;
 }
@@ -136,13 +180,13 @@ async function relayAction(action, offsetMilliseconds) {
   const body = offsetMilliseconds === undefined
     ? { action }
     : { action, offset_ms: offsetMilliseconds };
-  const response = await fixtureRequest(relay.controlEndpoint, relaySecret, body);
+  const response = await fixtureRequest(relayControlEndpoint, relaySecret, body);
   assert.equal(response.status, 200, `Relay action ${action} failed`);
   return response.value;
 }
 
 async function verifyToken(target, token) {
-  const response = await fixtureRequest(relay.verifyEndpoint, relaySecret, { target, token });
+  const response = await fixtureRequest(relayVerifyEndpoint, relaySecret, { target, token });
   return response.status;
 }
 
@@ -195,9 +239,11 @@ function tokenWithUnknownKid(token, kid) {
 const indexUrl = pathToFileURL(path.join(miakapiRepository, 'dist/index.js')).href;
 const coordinatorUrl = pathToFileURL(path.join(miakapiRepository, 'dist/coordinator.js')).href;
 const socketUrl = pathToFileURL(path.join(miakapiRepository, 'dist/internal/socket.js')).href;
+const codecUrl = pathToFileURL(path.join(miakapiRepository, 'dist/protocol/codec.js')).href;
 const { createHomeKeyAccessTokenProvider } = await import(indexUrl);
 const { createCoordinatorWithRuntime } = await import(coordinatorUrl);
 const { createProductionRuntime } = await import(socketUrl);
+const { decodeFrame, Opcode } = await import(codecUrl);
 
 const reasons = [];
 const sdkKids = [];
@@ -231,13 +277,54 @@ const directProvider = createHomeKeyAccessTokenProvider({
   homeKey,
 });
 const productionRuntime = createProductionRuntime();
-// Preserve real timers and sockets while placing the five-minute lease about
-// fifteen seconds from reauthentication. Probe-cache time travel is independent.
+const controlledReauthenticationTimers = [];
+const minimumReauthenticationDelayMilliseconds = 240_000;
+function integrationTimer(callback, delayMilliseconds) {
+  if (delayMilliseconds < minimumReauthenticationDelayMilliseconds) {
+    return productionRuntime.setTimer(callback, delayMilliseconds);
+  }
+  const timer = {
+    active: true,
+    delayMilliseconds,
+    fire() {
+      assert.equal(timer.active, true, 'Controlled reauthentication timer is inactive');
+      timer.active = false;
+      callback();
+    },
+    cancel() {
+      timer.active = false;
+    },
+  };
+  controlledReauthenticationTimers.push(timer);
+  return timer;
+}
+let socketConnections = 0;
+let processedReauthenticationAcks = 0;
+const observedSocketFactory = Object.freeze({
+  async connect(url, handlers, signal) {
+    socketConnections += 1;
+    return productionRuntime.socketFactory.connect(url, {
+      message(bytes) {
+        const frame = decodeFrame(bytes);
+        handlers.message(bytes);
+        if (frame.opcode === Opcode.ReauthOk) processedReauthenticationAcks += 1;
+      },
+      close(code, reason) {
+        handlers.close(code, reason);
+      },
+      error(error) {
+        handlers.error(error);
+      },
+    }, signal);
+  },
+});
+// Preserve the production socket and short timers, while explicitly firing the
+// real five-minute lease's scheduled reauthentication after the cache matrix.
 const runtime = Object.freeze({
-  socketFactory: productionRuntime.socketFactory,
-  now: () => Date.now() + 270_000,
+  socketFactory: observedSocketFactory,
+  now: productionRuntime.now,
   random: () => 0,
-  setTimer: productionRuntime.setTimer,
+  setTimer: integrationTimer,
 });
 const failures = [];
 const lifecycle = [];
@@ -374,16 +461,13 @@ controlState = await controlAction('status');
 assert.equal(controlState.jwks.requests, 7);
 assert.equal(controlState.jwks.responses.not_modified, 3);
 
-await waitUntil(() => {
-  try {
-    return jsonFile(
-      relayEvidenceFile,
-      'miakapp.relay-integration-evidence/2',
-    ).successful_coordinator_verifications >= 2;
-  } catch {
-    return false;
-  }
-}, 'Scheduled same-session reauthentication', 25_000);
+assert.equal(controlledReauthenticationTimers.length, 1);
+assert.equal(controlledReauthenticationTimers[0].active, true);
+controlledReauthenticationTimers[0].fire();
+await waitUntil(
+  () => processedReauthenticationAcks === 1,
+  'Processed same-session REAUTH_OK',
+);
 
 if (reasons.length !== 2
   || reasons[0] !== 'initial'
@@ -393,11 +477,13 @@ if (reasons.length !== 2
   || sdkKids[1] !== futureKid
   || coordinator.status !== 'ready'
   || failures.length !== 0
-  || lifecycle.includes('reconnecting')) {
+  || lifecycle.includes('reconnecting')
+  || socketConnections !== 1) {
   throw new Error('Coordinator rotation did not remain on one healthy session');
 }
 await coordinator.stop({ deadlineMs: 2_000 });
 if (coordinator.status !== 'stopped') throw new Error('Coordinator did not stop cleanly');
+assert.equal(socketConnections, 1);
 
 const expectedControlEvidence = {
   schema: 'miakapp.relay-integration-jwks/1',
@@ -456,6 +542,6 @@ process.stdout.write(`${JSON.stringify({
   successful_relay_verifications: expectedRelayEvidence.successful_coordinator_verifications,
   jwks_requests: expectedControlEvidence.jwks.requests,
   concurrent_verifications: 32,
-  reconnects: 0,
+  reconnects: socketConnections - 1,
   status: 'conformant',
 })}\n`);

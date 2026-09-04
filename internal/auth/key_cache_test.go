@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -147,11 +148,20 @@ func TestKeyCacheCoalescesConcurrentFetchesAndRevalidatesWithETag(t *testing.T) 
 	}
 }
 
-func TestUnknownKIDRefreshJoinsAnActiveRefreshBeforeApplyingTheAbuseWindow(t *testing.T) {
+func TestConcurrentUnknownKIDRefreshesJoinAnActiveRefreshBeforeApplyingTheAbuseWindow(t *testing.T) {
 	now := time.Unix(1_788_211_200, 0)
 	refreshDone := make(chan struct{})
+	allWaiting := make(chan struct{})
+	var clockCalls atomic.Int64
+	var waitingOnce sync.Once
+	const callers = 32
 	cache := &keyCache{
-		now:                func() time.Time { return now },
+		now: func() time.Time {
+			if clockCalls.Add(1) == callers*2 {
+				waitingOnce.Do(func() { close(allWaiting) })
+			}
+			return now
+		},
 		keys:               []controlplane.PublicJWK{{KID: "old-key"}},
 		expiresAt:          now.Add(time.Minute),
 		refreshing:         true,
@@ -159,31 +169,107 @@ func TestUnknownKIDRefreshJoinsAnActiveRefreshBeforeApplyingTheAbuseWindow(t *te
 		nextUnknownRefresh: now.Add(unknownKIDRefreshDelay),
 	}
 	type result struct {
-		keys      []controlplane.PublicJWK
-		refreshed bool
-		err       error
+		keys []controlplane.PublicJWK
+		err  error
 	}
-	completed := make(chan result, 1)
-	go func() {
-		keys, refreshed, err := cache.refreshUnknownKID(context.Background())
-		completed <- result{keys: keys, refreshed: refreshed, err: err}
-	}()
-
+	completed := make(chan result, callers)
+	for range callers {
+		go func() {
+			keys, err := cache.refreshUnknownKID(context.Background())
+			completed <- result{keys: keys, err: err}
+		}()
+	}
 	select {
-	case received := <-completed:
-		t.Fatalf("unknown-key caller bypassed the active refresh: %#v", received)
-	case <-time.After(25 * time.Millisecond):
+	case <-allWaiting:
+	case <-time.After(time.Second):
+		t.Fatal("concurrent unknown-key callers did not reach the active refresh")
 	}
+	// Acquiring the cache lock after the final clock observation proves every
+	// caller evaluated the active-refresh branch before it is released.
 	cache.mu.Lock()
 	cache.keys = []controlplane.PublicJWK{{KID: "new-key"}}
 	cache.refreshing = false
 	close(refreshDone)
 	cache.mu.Unlock()
 
-	received := <-completed
-	if received.err != nil || !received.refreshed ||
-		len(received.keys) != 1 || received.keys[0].KID != "new-key" {
-		t.Fatalf("unknown-key caller did not join the active refresh: %#v", received)
+	for range callers {
+		select {
+		case received := <-completed:
+			if received.err != nil ||
+				len(received.keys) != 1 || received.keys[0].KID != "new-key" {
+				t.Fatalf("unknown-key caller did not join the active refresh: %#v", received)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("concurrent unknown-key refresh did not complete")
+		}
+	}
+}
+
+func TestUnknownKIDRefreshHonorsWaiterCancellation(t *testing.T) {
+	now := time.Unix(1_788_211_200, 0)
+	cache := &keyCache{
+		now:         func() time.Time { return now },
+		keys:        []controlplane.PublicJWK{{KID: "old-key"}},
+		expiresAt:   now.Add(time.Minute),
+		refreshing:  true,
+		refreshDone: make(chan struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	keys, err := cache.refreshUnknownKID(ctx)
+	if !errors.Is(err, context.Canceled) || keys != nil {
+		t.Fatalf("cancelled unknown-key waiter returned an unexpected result: keys=%#v error=%v", keys, err)
+	}
+}
+
+func TestUnknownKIDRefreshSharesAnActiveRefreshFailure(t *testing.T) {
+	now := time.Unix(1_788_211_200, 0)
+	refreshDone := make(chan struct{})
+	waiting := make(chan struct{})
+	var clockCalls atomic.Int64
+	var waitingOnce sync.Once
+	cache := &keyCache{
+		now: func() time.Time {
+			if clockCalls.Add(1) == 2 {
+				waitingOnce.Do(func() { close(waiting) })
+			}
+			return now
+		},
+		keys:        []controlplane.PublicJWK{{KID: "old-key"}},
+		expiresAt:   now.Add(-time.Second),
+		refreshing:  true,
+		refreshDone: refreshDone,
+	}
+	wantErr := errors.New("shared refresh failed")
+	type result struct {
+		keys []controlplane.PublicJWK
+		err  error
+	}
+	completed := make(chan result, 1)
+	go func() {
+		keys, err := cache.refreshUnknownKID(context.Background())
+		completed <- result{keys: keys, err: err}
+	}()
+
+	select {
+	case <-waiting:
+	case <-time.After(time.Second):
+		t.Fatal("unknown-key caller did not reach the active refresh")
+	}
+	cache.mu.Lock()
+	cache.lastFailure = wantErr
+	cache.nextFetch = now.Add(failedFetchRetryDelay)
+	cache.refreshing = false
+	close(refreshDone)
+	cache.mu.Unlock()
+
+	select {
+	case received := <-completed:
+		if !errors.Is(received.err, wantErr) || received.keys != nil {
+			t.Fatalf("unknown-key caller did not share the refresh failure: %#v", received)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unknown-key refresh failure did not complete")
 	}
 }
 
