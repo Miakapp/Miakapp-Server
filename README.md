@@ -2,8 +2,8 @@
 
 Miakapp Server is the in-memory Go relay for the Miakapp 3.5 protocol. It
 connects home coordinators, authenticated users, and future CLI sessions without
-holding Firebase credentials, Home Keys, push credentials, or product business
-logic.
+persisting Firebase credentials, Home Keys, push credentials, or product
+business logic.
 
 The standalone binary validates short-lived coordinator and CLI access tokens
 against the configured control-plane JWKS and validates human sessions against
@@ -48,8 +48,8 @@ Requirements:
 
 - Go 1.26.6
 - Docker for image checks
-- Bun 1.2.23 and Node.js 22.22 or newer for the optional MiakAPI integration
-  check
+- Bun 1.2.23, Node.js 22.22 or newer, and the exact Playwright Chromium runtime
+  from MiakAPI for the optional SDK/browser integration check
 - Java 21 and OpenSSL for the optional full control-plane integration check
 
 Run the Go checks:
@@ -59,12 +59,27 @@ go test -race ./...
 go vet ./...
 ```
 
-Run the real MiakAPI coordinator integration after building a local MiakAPI
-checkout:
+Run the real MiakAPI coordinator and browser integration after installing its
+dependencies, browser runtime, and building a local MiakAPI checkout:
 
 ```sh
+cd /absolute/path/to/MiakAPI
+bun install --frozen-lockfile
+bunx playwright install chromium
+bun run build
+cd /absolute/path/to/Miakapp-Server
 ./scripts/check-miakapi-integration.sh /absolute/path/to/MiakAPI
 ```
+
+The gate serves the MiakAPI browser fixture from loopback HTTPS, allows exactly
+that page Origin, and executes it in headless Chromium against the real relay.
+It proves enrollment, initial state, one patch, one call/result and scheduled
+reauthentication on one WebSocket. A second call succeeds after the original
+four-second lease expires, proving the correlated renewal completed without a
+reconnect. The fixture uses only synthetic tokens and emits a closed semantic
+JSON result; browser traces and WebSocket frame inspection stay disabled. It
+does not prove Google's live Firebase certificate path or memory isolation from
+a malicious relay.
 
 Run the production authentication adapter against the canonical control-plane
 vectors:
@@ -148,6 +163,13 @@ Google's fixed Secure Token certificate endpoint. Certificate lifetime follows
 the endpoint's `Cache-Control` maximum age. This local verification deliberately
 does not claim immediate Firebase account-disablement or token-revocation checks;
 the browser must reauthenticate before its current ID-token lease expires.
+
+Under the current RFC 0004 profile, the selected relay necessarily receives the
+Firebase ID token as a reusable bearer credential and observes home traffic.
+Users may therefore select only an official relay or one they explicitly trust
+as completely as the Miakapp backend. Arbitrary community-relay selection must
+remain disabled until the control plane can issue a short-lived credential bound
+to one relay audience, home, user and role.
 
 This preview is not yet the deployment admission-control boundary. Per-IP
 connection limits, total-home admission, and aggregate cross-connection memory

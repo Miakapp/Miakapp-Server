@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/signal"
@@ -21,7 +23,6 @@ import (
 type verifier struct{}
 
 func (verifier) Verify(_ context.Context, request auth.Request) (auth.Identity, error) {
-	expiresAt := time.Now().Add(10 * time.Minute)
 	switch request.Token {
 	case "integration-coordinator-token":
 		return auth.Identity{
@@ -30,15 +31,23 @@ func (verifier) Verify(_ context.Context, request auth.Request) (auth.Identity, 
 			ID:              "integration-home",
 			ClientID:        "integration-client",
 			CoordinatorName: "integration",
-			ExpiresAt:       expiresAt,
+			ExpiresAt:       time.Now().Add(10 * time.Minute),
 		}, nil
-	case "integration-user-token", "integration-user-token-new":
+	case "integration-user-token":
 		return auth.Identity{
 			Role:          auth.RoleUser,
 			HomeID:        "integration-home",
 			ID:            "integration-user",
 			VerifiedEmail: "integration@example.test",
-			ExpiresAt:     expiresAt,
+			ExpiresAt:     time.Now().Add(4 * time.Second),
+		}, nil
+	case "integration-user-token-new":
+		return auth.Identity{
+			Role:          auth.RoleUser,
+			HomeID:        "integration-home",
+			ID:            "integration-user",
+			VerifiedEmail: "integration@example.test",
+			ExpiresAt:     time.Now().Add(10 * time.Minute),
 		}, nil
 	default:
 		return auth.Identity{}, auth.Failure(auth.ErrRejected, nil)
@@ -46,9 +55,23 @@ func (verifier) Verify(_ context.Context, request auth.Request) (auth.Identity, 
 }
 
 func main() {
+	browserBundlePath := os.Getenv("MIAKAPP_BROWSER_BUNDLE")
+	if browserBundlePath == "" {
+		panic("MIAKAPP_BROWSER_BUNDLE is required")
+	}
+	browserBundle, err := os.ReadFile(browserBundlePath)
+	if err != nil {
+		panic(err)
+	}
+	if len(browserBundle) > 2*1024*1024 {
+		panic("MIAKAPP_BROWSER_BUNDLE exceeds the fixture limit")
+	}
+
+	server := httptest.NewUnstartedServer(nil)
+	origin := "https://" + server.Listener.Addr().String()
 	cfg := config.Config{
 		ListenAddress:   ":0",
-		AllowedOrigins:  map[string]struct{}{},
+		AllowedOrigins:  map[string]struct{}{origin: {}},
 		Handshake:       2 * time.Second,
 		WriteTimeout:    2 * time.Second,
 		PingInterval:    time.Minute,
@@ -62,7 +85,33 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	server := httptest.NewUnstartedServer(engine)
+	mux := http.NewServeMux()
+	mux.Handle("/", engine)
+	mux.HandleFunc("/integration", func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/integration" {
+			http.NotFound(response, request)
+			return
+		}
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Security-Policy", fmt.Sprintf(
+			"default-src 'none'; script-src 'self'; connect-src wss://%s; base-uri 'none'; frame-ancestors 'none'",
+			server.Listener.Addr().String(),
+		))
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		response.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = io.WriteString(response, "<!doctype html><meta charset=\"utf-8\"><script src=\"/browser.js\"></script>")
+	})
+	mux.HandleFunc("/browser.js", func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/browser.js" {
+			http.NotFound(response, request)
+			return
+		}
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		response.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = response.Write(browserBundle)
+	})
+	server.Config.Handler = mux
 	server.EnableHTTP2 = false
 	server.StartTLS()
 	defer server.Close()
@@ -85,6 +134,7 @@ func main() {
 
 	metadata := map[string]string{
 		"relayUrl": strings.Replace(server.URL, "https://", "wss://", 1) + "/ws",
+		"pageUrl":  server.URL + "/integration",
 		"caFile":   certificatePath,
 	}
 	if err = json.NewEncoder(os.Stdout).Encode(metadata); err != nil {
