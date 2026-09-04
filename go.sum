@@ -2,6 +2,8 @@ github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNU
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/miakapp/miakapp-v3/control-plane-contract/go v0.0.0-20260904115658-abee78b80383 h1:NN+AIZu7xw2ecFZxj9ysQw3133lfMyLa6FyaqakzEIY=
+github.com/miakapp/miakapp-v3/control-plane-contract/go v0.0.0-20260904115658-abee78b80383/go.mod h1:cQE1eJh3FwoiffiXMkCxsPyjll9nb9KE8G37mU6oFF4=
 github.com/miakapp/miakapp-v3/protocol/go v0.0.0-20260831114037-b927789691dd h1:QMcEzyWak+1XyEIDV7dgsw8XhF5w6Df4zHklBQSv31g=
 github.com/miakapp/miakapp-v3/protocol/go v0.0.0-20260831114037-b927789691dd/go.mod h1:3AmoKsBHhQ4xYN5f5fnHd4vlk7IlrJqINQ0GBmYzHN4=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=

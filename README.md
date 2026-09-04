@@ -5,13 +5,12 @@ connects home coordinators, authenticated users, and future CLI sessions without
 holding Firebase credentials, Home Keys, push credentials, or product business
 logic.
 
-This repository currently contains an implementation preview of the relay/SDK vertical slice. The
-engine is usable through its injected authentication interface and its tests,
-but the standalone binary intentionally rejects every WebSocket authentication
-attempt until the canonical platform control-plane contract defines token
-claims, JWKS rotation, scopes, and revocation. `/ping` remains available for
-container and network validation. Do not deploy this preview as a production
-replacement.
+The standalone binary validates short-lived coordinator and CLI access tokens
+against the configured control-plane JWKS and validates human sessions against
+Firebase public certificates. It holds no verification secret and never calls
+the platform with authenticated authority. The relay remains an implementation
+preview until deployment admission limits and the staging relay integration gate
+have passed; do not deploy it as a production replacement yet.
 
 ## Contract
 
@@ -66,8 +65,15 @@ checkout:
 ./scripts/check-miakapi-integration.sh /absolute/path/to/MiakAPI
 ```
 
-CI checks out the SDK at an immutable commit so relay changes cannot silently
-drift against a moving integration dependency.
+Run the production authentication adapter against the canonical control-plane
+vectors:
+
+```sh
+./scripts/check-control-plane-integration.sh /absolute/path/to/Miakapp-V3
+```
+
+CI checks out both repositories at immutable commits so relay changes cannot
+silently drift against moving protocol, authentication, or SDK dependencies.
 
 Build the binary and image:
 
@@ -82,6 +88,10 @@ The executable reads:
 |---|---:|---|
 | `MIAKAPP_LISTEN_ADDRESS` | `:3000` | HTTP listen address |
 | `MIAKAPP_ALLOWED_ORIGINS` | empty | Comma-separated exact `http(s)://host[:port]` browser origins |
+| `MIAKAPP_CONTROL_PLANE_ISSUER` | required | Exact HTTPS control-plane issuer origin |
+| `MIAKAPP_CONTROL_PLANE_JWKS_URL` | required | Same-origin `/.well-known/jwks.json` endpoint |
+| `MIAKAPP_RELAY_AUDIENCE` | required | Exact public `wss://.../ws` URL for this relay |
+| `MIAKAPP_FIREBASE_PROJECT_ID` | required | Firebase project accepted for human sessions |
 | `MIAKAPP_HANDSHAKE_TIMEOUT` | `5s` | Maximum wait for HELLO and authentication |
 | `MIAKAPP_WRITE_TIMEOUT` | `5s` | One WebSocket write deadline |
 | `MIAKAPP_PING_INTERVAL` | `30s` | RFC 6455 liveness interval |
@@ -99,14 +109,21 @@ paths, queries, and fragments are rejected.
 
 `internal/auth.Verifier` is the sole credential boundary. It returns a bounded
 identity lease; the relay independently binds that lease to the requested role,
-home, coordinator name, principal ID, and expiry. Reauthentication cannot change
-the established principal.
+home, coordinator name, principal ID, Home Key client ID, and expiry.
+Reauthentication cannot change the established principal or switch Home Keys.
 
-The production verifier is deliberately not guessed here. The next control-plane
-contract must define owner bootstrap, Home Key exchange, access-token claims,
-audience selection, scopes, signing/JWKS rotation, revocation, push grants, and
-publisher authorization together. Until that contract lands, the standalone
-entry point uses `RejectingVerifier` and fails closed.
+Coordinator and CLI tokens use the canonical Ed25519 profile from RFC 0004. The
+relay pins one issuer, one audience and one same-origin JWKS URL. The JWKS client
+accepts no redirects, bounds responses to 64 KiB and 16 exact Ed25519 keys,
+requires the specified ETag and 60-second cache policy, coalesces concurrent
+refreshes, and permits at most one unknown-key refresh per ten seconds. Expired
+caches fail closed if they cannot be refreshed.
+
+Human sessions use Firebase ID tokens, the pinned Firebase project/issuer and
+Google's fixed Secure Token certificate endpoint. Certificate lifetime follows
+the endpoint's `Cache-Control` maximum age. This local verification deliberately
+does not claim immediate Firebase account-disablement or token-revocation checks;
+the browser must reauthenticate before its current ID-token lease expires.
 
 This preview is not yet the deployment admission-control boundary. Per-IP
 connection limits, total-home admission, and aggregate cross-connection memory

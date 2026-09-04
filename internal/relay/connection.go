@@ -315,7 +315,9 @@ func (connection *connection) reauthenticate(frame protocol.Frame) *relayError {
 	if err = auth.ValidateBinding(request, identity, time.Now()); err != nil {
 		return authenticationFailure(err)
 	}
-	if identity.ID != connection.identity.ID || identity.VerifiedEmail != connection.identity.VerifiedEmail {
+	if identity.ID != connection.identity.ID ||
+		identity.ClientID != connection.identity.ClientID ||
+		identity.VerifiedEmail != connection.identity.VerifiedEmail {
 		return fatalError(codeUnauthenticated, false, "reauthentication changed the connection principal", closeAuth)
 	}
 	if !connection.replaceLease(previousDeadline, identity.ExpiresAt) {

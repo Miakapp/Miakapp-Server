@@ -26,6 +26,16 @@ func (fixtureVerifier) Verify(_ context.Context, request auth.Request) (auth.Ide
 			Role:            auth.RoleCoordinator,
 			HomeID:          "home-1",
 			ID:              "home-1",
+			ClientID:        "client-1",
+			CoordinatorName: "automation",
+			ExpiresAt:       expiry,
+		}, nil
+	case "coordinator-token-changed-client":
+		return auth.Identity{
+			Role:            auth.RoleCoordinator,
+			HomeID:          "home-1",
+			ID:              "home-1",
+			ClientID:        "client-2",
 			CoordinatorName: "automation",
 			ExpiresAt:       expiry,
 		}, nil
@@ -34,6 +44,7 @@ func (fixtureVerifier) Verify(_ context.Context, request auth.Request) (auth.Ide
 			Role:            auth.RoleCoordinator,
 			HomeID:          "home-1",
 			ID:              "home-1",
+			ClientID:        "client-3",
 			CoordinatorName: "secondary",
 			ExpiresAt:       expiry,
 		}, nil
@@ -524,6 +535,23 @@ func TestReauthenticationCannotChangePrincipal(t *testing.T) {
 	peer.send(t, protocol.Frame{
 		Opcode:  protocol.OpcodeReauth,
 		Payload: []any{int64(51), "user-token-changed"},
+	})
+	fatal := peer.receive(t, protocol.OpcodeFatal)
+	if integer(fatal.Payload[1]) != codeUnauthenticated {
+		t.Fatalf("unexpected reauthentication fatal: %#v", fatal.Payload)
+	}
+}
+
+func TestReauthenticationCannotChangeHomeKeyClient(t *testing.T) {
+	_, httpServer := newTestServer(t, nil)
+	peer := connectPeer(t, httpServer)
+	peer.send(t, hello(auth.RoleCoordinator, "coordinator-token", []any{"automation"}))
+	peer.receive(t, protocol.OpcodeWelcome)
+	peer.receive(t, protocol.OpcodePresenceSnapshot)
+
+	peer.send(t, protocol.Frame{
+		Opcode:  protocol.OpcodeReauth,
+		Payload: []any{int64(52), "coordinator-token-changed-client"},
 	})
 	fatal := peer.receive(t, protocol.OpcodeFatal)
 	if integer(fatal.Payload[1]) != codeUnauthenticated {

@@ -32,6 +32,7 @@ type Identity struct {
 	Role            Role
 	HomeID          string
 	ID              string
+	ClientID        string
 	CoordinatorName string
 	VerifiedEmail   string
 	ExpiresAt       time.Time
@@ -101,6 +102,13 @@ func ValidateBinding(request Request, identity Identity, now time.Time) error {
 	if !validIdentityValue(identity.HomeID, 128) || !validIdentityValue(identity.ID, 128) {
 		return Failure(ErrRejected, errors.New("missing identity binding"))
 	}
+	if identity.Role == RoleUser {
+		if identity.ClientID != "" {
+			return Failure(ErrRejected, errors.New("unexpected Home Key client binding"))
+		}
+	} else if !validIdentityValue(identity.ClientID, 128) {
+		return Failure(ErrRejected, errors.New("missing Home Key client binding"))
+	}
 	if request.HomeID != "" && identity.HomeID != request.HomeID {
 		return Failure(ErrRejected, errors.New("home mismatch"))
 	}
@@ -136,8 +144,7 @@ func validIdentityValue(value string, maximumBytes int) bool {
 	return true
 }
 
-// RejectingVerifier keeps the production binary fail-closed until a canonical
-// platform verifier is supplied.
+// RejectingVerifier is retained for explicit embedded tests and fails closed.
 type RejectingVerifier struct{}
 
 func (RejectingVerifier) Verify(context.Context, Request) (Identity, error) {

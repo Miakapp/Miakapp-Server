@@ -13,6 +13,7 @@ func validIdentity() Identity {
 		Role:            RoleCoordinator,
 		HomeID:          "home-1",
 		ID:              "home-1",
+		ClientID:        "client-1",
 		CoordinatorName: "automation",
 		ExpiresAt:       time.Now().Add(time.Minute),
 	}
@@ -33,6 +34,7 @@ func TestValidateBindingRejectsPrincipalChanges(t *testing.T) {
 		{name: "home", mutate: func(identity *Identity) { identity.HomeID = "home-2" }, kind: ErrRejected},
 		{name: "coordinator", mutate: func(identity *Identity) { identity.CoordinatorName = "other" }, kind: ErrRejected},
 		{name: "long ID", mutate: func(identity *Identity) { identity.ID = strings.Repeat("x", 129) }, kind: ErrRejected},
+		{name: "missing client", mutate: func(identity *Identity) { identity.ClientID = "" }, kind: ErrRejected},
 		{name: "control character", mutate: func(identity *Identity) { identity.ID = "home\n1" }, kind: ErrRejected},
 		{name: "invalid email", mutate: func(identity *Identity) { identity.VerifiedEmail = "user\x00@example.test" }, kind: ErrRejected},
 		{name: "unrepresentable expiry", mutate: func(identity *Identity) { identity.ExpiresAt = time.UnixMilli(9_007_199_254_740_992) }, kind: ErrRejected},
