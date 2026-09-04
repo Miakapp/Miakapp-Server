@@ -4,10 +4,9 @@ import "testing"
 
 func validPlatformConfig() PlatformConfig {
 	return PlatformConfig{
-		Issuer:            "https://control.example.test",
-		JWKSURL:           "https://control.example.test/.well-known/jwks.json",
-		RelayAudience:     "wss://relay.example.test/ws",
-		FirebaseProjectID: "demo-miakapp-v4",
+		Issuer:        "https://control.example.test",
+		JWKSURL:       "https://control.example.test/.well-known/jwks.json",
+		RelayAudience: "wss://relay.example.test/ws",
 	}
 }
 
@@ -32,7 +31,6 @@ func TestPlatformConfigPinsCanonicalAuthorities(t *testing.T) {
 		{name: "relay query", mutate: func(config *PlatformConfig) { config.RelayAudience += "?key=value" }},
 		{name: "relay path", mutate: func(config *PlatformConfig) { config.RelayAudience = "wss://relay.example.test/socket" }},
 		{name: "insecure relay", mutate: func(config *PlatformConfig) { config.RelayAudience = "ws://relay.example.test/ws" }},
-		{name: "Firebase project", mutate: func(config *PlatformConfig) { config.FirebaseProjectID = "miakapp-3.example" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -50,7 +48,7 @@ func TestLoadPlatformConfigRequiresEveryPublicAuthority(t *testing.T) {
 	t.Setenv("MIAKAPP_CONTROL_PLANE_ISSUER", config.Issuer)
 	t.Setenv("MIAKAPP_CONTROL_PLANE_JWKS_URL", config.JWKSURL)
 	t.Setenv("MIAKAPP_RELAY_AUDIENCE", config.RelayAudience)
-	t.Setenv("MIAKAPP_FIREBASE_PROJECT_ID", config.FirebaseProjectID)
+	t.Setenv("MIAKAPP_FIREBASE_PROJECT_ID", "ignored-obsolete-setting")
 	loaded, err := LoadPlatformConfig()
 	if err != nil {
 		t.Fatal(err)

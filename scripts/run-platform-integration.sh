@@ -20,14 +20,23 @@ for name in \
   MIAKAPP_CONTROL_SECRET_FILE \
   MIAKAPP_RELAY_METADATA_FILE \
   MIAKAPP_RELAY_EVIDENCE_FILE \
+  MIAKAPP_SECONDARY_RELAY_METADATA_FILE \
+  MIAKAPP_SECONDARY_RELAY_EVIDENCE_FILE \
   MIAKAPP_RELAY_CONTROL_SECRET_FILE \
-  MIAKAPP_HOME_KEY_FILE; do
+  MIAKAPP_HOME_KEY_FILE \
+  MIAKAPP_BROWSER_BUNDLE \
+  MIAKAPP_BROWSER_SOURCE_FILE; do
   required_environment "$name"
 done
 
 control_pid=
 relay_pid=
+secondary_relay_pid=
 cleanup() {
+  if [ -n "$secondary_relay_pid" ]; then
+    kill -TERM "$secondary_relay_pid" 2>/dev/null || true
+    wait "$secondary_relay_pid" 2>/dev/null || true
+  fi
   if [ -n "$relay_pid" ]; then
     kill -TERM "$relay_pid" 2>/dev/null || true
     wait "$relay_pid" 2>/dev/null || true
@@ -76,19 +85,38 @@ wait_for_file \
   "$relay_pid" \
   "$MIAKAPP_RELAY_METADATA_FILE.stderr"
 
+MIAKAPP_RELAY_METADATA_FILE="$MIAKAPP_SECONDARY_RELAY_METADATA_FILE" \
+MIAKAPP_RELAY_EVIDENCE_FILE="$MIAKAPP_SECONDARY_RELAY_EVIDENCE_FILE" \
+  "$MIAKAPP_RELAY_FIXTURE_BINARY" \
+  >"$MIAKAPP_SECONDARY_RELAY_METADATA_FILE.stdout" \
+  2>"$MIAKAPP_SECONDARY_RELAY_METADATA_FILE.stderr" &
+secondary_relay_pid=$!
+wait_for_file \
+  "$MIAKAPP_SECONDARY_RELAY_METADATA_FILE" \
+  "$secondary_relay_pid" \
+  "$MIAKAPP_SECONDARY_RELAY_METADATA_FILE.stderr"
+
 NODE_EXTRA_CA_CERTS="$MIAKAPP_INTEGRATION_CERT_FILE" node \
   "$MIAKAPP_V3_REPOSITORY/control-plane/scripts/setup-relay-integration.mjs" \
   "$MIAKAPP_CONTROL_METADATA_FILE" \
   "$MIAKAPP_RELAY_METADATA_FILE" \
   "$MIAKAPP_HOME_KEY_FILE"
 
+relay_repository=$(cd "$(dirname "$0")/.." && pwd)
+node "$relay_repository/test/integration/prepare-browser-source.mjs" \
+  "$MIAKAPP_V3_REPOSITORY" \
+  "$MIAKAPP_BROWSER_SOURCE_FILE"
+
 NODE_EXTRA_CA_CERTS="$MIAKAPP_INTEGRATION_CERT_FILE" node \
-  "$(cd "$(dirname "$0")/.." && pwd)/test/integration/platform-auth.mjs" \
+  "$relay_repository/test/integration/platform-auth.mjs" \
   "$MIAKAPP_API_REPOSITORY" \
   "$MIAKAPP_CONTROL_METADATA_FILE" \
   "$MIAKAPP_RELAY_METADATA_FILE" \
+  "$MIAKAPP_SECONDARY_RELAY_METADATA_FILE" \
   "$MIAKAPP_HOME_KEY_FILE" \
   "$MIAKAPP_CONTROL_SECRET_FILE" \
   "$MIAKAPP_RELAY_CONTROL_SECRET_FILE" \
   "$MIAKAPP_CONTROL_EVIDENCE_FILE" \
-  "$MIAKAPP_RELAY_EVIDENCE_FILE"
+  "$MIAKAPP_RELAY_EVIDENCE_FILE" \
+  "$MIAKAPP_SECONDARY_RELAY_EVIDENCE_FILE" \
+  "$MIAKAPP_BROWSER_SOURCE_FILE"

@@ -6,7 +6,7 @@ toolchain go1.26.6
 
 require (
 	github.com/coder/websocket v1.8.15
-	github.com/miakapp/miakapp-v3/control-plane-contract/go v0.0.0-20260904115658-abee78b80383
+	github.com/miakapp/miakapp-v3/control-plane-contract/go v0.0.0-20260904181620-cc3bcd70fdb4
 	github.com/miakapp/miakapp-v3/protocol/go v0.0.0-20260831114037-b927789691dd
 )
 

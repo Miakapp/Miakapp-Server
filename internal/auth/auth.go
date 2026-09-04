@@ -53,8 +53,8 @@ func (identity Identity) Principal(sessionID int64) []any {
 }
 
 // Verifier validates initial and replacement access material. Implementations
-// must perform all signature, issuer, audience, expiry and revocation checks
-// required by the future platform control-plane contract.
+// must perform all signature, issuer, audience, expiry and profile checks
+// required by the platform control-plane contract.
 type Verifier interface {
 	Verify(context.Context, Request) (Identity, error)
 }
@@ -102,15 +102,36 @@ func ValidateBinding(request Request, identity Identity, now time.Time) error {
 	if !validIdentityValue(identity.HomeID, 128) || !validIdentityValue(identity.ID, 128) {
 		return Failure(ErrRejected, errors.New("missing identity binding"))
 	}
+	expectedScope := ""
+	switch identity.Role {
+	case RoleUser:
+		expectedScope = "relay:user"
+	case RoleCoordinator:
+		expectedScope = "relay:coordinator"
+	case RoleCLI:
+		expectedScope = "relay:cli"
+	default:
+		return Failure(ErrRejected, errors.New("unsupported identity role"))
+	}
+	if _, ok := identity.Scopes[expectedScope]; !ok || len(identity.Scopes) != 1 {
+		return Failure(ErrRejected, errors.New("identity scope does not match its role"))
+	}
 	if identity.Role == RoleUser {
 		if identity.ClientID != "" {
 			return Failure(ErrRejected, errors.New("unexpected Home Key client binding"))
 		}
+		if request.HomeID == "" || identity.HomeID != request.HomeID {
+			return Failure(ErrRejected, errors.New("user home mismatch"))
+		}
 	} else if !validIdentityValue(identity.ClientID, 128) {
 		return Failure(ErrRejected, errors.New("missing Home Key client binding"))
-	}
-	if request.HomeID != "" && identity.HomeID != request.HomeID {
-		return Failure(ErrRejected, errors.New("home mismatch"))
+	} else {
+		if request.HomeID != "" && identity.HomeID != request.HomeID {
+			return Failure(ErrRejected, errors.New("home mismatch"))
+		}
+		if identity.VerifiedEmail != "" {
+			return Failure(ErrRejected, errors.New("unexpected verified email"))
+		}
 	}
 	if request.Role == RoleCoordinator {
 		if identity.CoordinatorName != request.CoordinatorName {

@@ -18,8 +18,13 @@ relay_repository=$(cd "$(dirname "$0")/.." && pwd)
 v3_repository=$1
 api_repository=$2
 if [ ! -f "$v3_repository/control-plane/lib/api.js" ] \
-  || [ ! -f "$api_repository/dist/access-token-provider.js" ]; then
+  || [ ! -f "$api_repository/dist/access-token-provider.js" ] \
+  || [ ! -f "$api_repository/dist/browser.js" ]; then
   echo "Miakapp-V3 control plane and MiakAPI must be built before integration" >&2
+  exit 66
+fi
+if [ ! -f "$api_repository/node_modules/playwright/package.json" ]; then
+  echo "MiakAPI development dependencies must be installed before integration" >&2
   exit 66
 fi
 
@@ -62,6 +67,14 @@ openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
 go build -tags integration -trimpath \
   -o "$integration_directory/platform-fixture-server" \
   ./test/platform-fixture-server
+browser_build_directory="$integration_directory/browser-build"
+mkdir -p "$browser_build_directory/node_modules"
+ln -s "$api_repository" "$browser_build_directory/node_modules/miakapi"
+cp "$relay_repository/test/integration/platform-browser.ts" \
+  "$browser_build_directory/platform-browser.ts"
+bun build "$browser_build_directory/platform-browser.ts" \
+  --target=browser \
+  --outfile="$integration_directory/platform-browser.js"
 
 export MIAKAPP_V3_REPOSITORY="$v3_repository"
 export MIAKAPP_API_REPOSITORY="$api_repository"
@@ -73,8 +86,12 @@ export MIAKAPP_CONTROL_EVIDENCE_FILE="$integration_directory/control-evidence.js
 export MIAKAPP_CONTROL_SECRET_FILE="$integration_directory/control-secret"
 export MIAKAPP_RELAY_METADATA_FILE="$integration_directory/relay.json"
 export MIAKAPP_RELAY_EVIDENCE_FILE="$integration_directory/evidence.json"
+export MIAKAPP_SECONDARY_RELAY_METADATA_FILE="$integration_directory/secondary-relay.json"
+export MIAKAPP_SECONDARY_RELAY_EVIDENCE_FILE="$integration_directory/secondary-evidence.json"
 export MIAKAPP_RELAY_CONTROL_SECRET_FILE="$integration_directory/relay-secret"
 export MIAKAPP_HOME_KEY_FILE="$integration_directory/home-key"
+export MIAKAPP_BROWSER_BUNDLE="$integration_directory/platform-browser.js"
+export MIAKAPP_BROWSER_SOURCE_FILE="$integration_directory/browser-source.json"
 export FIREBASE_CLI_DISABLE_UPDATE_CHECK=true
 export GCLOUD_PROJECT=demo-miakapp-v4
 export GOOGLE_CLOUD_PROJECT=demo-miakapp-v4

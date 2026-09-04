@@ -50,7 +50,10 @@ type probeEvidence struct {
 type integrationEvidence struct {
 	Schema                             string        `json:"schema"`
 	SuccessfulCoordinatorVerifications int           `json:"successful_coordinator_verifications"`
-	PrincipalConsistent                bool          `json:"principal_consistent"`
+	SuccessfulUserVerifications        int           `json:"successful_user_verifications"`
+	CoordinatorPrincipalConsistent     bool          `json:"coordinator_principal_consistent"`
+	UserPrincipalConsistent            bool          `json:"user_principal_consistent"`
+	UnexpectedRoles                    int           `json:"unexpected_roles"`
 	RelayWarmupSuccesses               int           `json:"relay_warmup_successes"`
 	ProbeClockOffsetMilliseconds       int64         `json:"probe_clock_offset_milliseconds"`
 	Probe                              probeEvidence `json:"probe"`
@@ -61,35 +64,44 @@ type principalBinding struct {
 	principalID     string
 	clientID        string
 	coordinatorName string
+	verifiedEmail   string
 	role            auth.Role
 }
 
 type integrationState struct {
 	evidenceFile string
 
-	mu                  sync.Mutex
-	successes           int
-	principalConsistent bool
-	firstPrincipal      *principalBinding
-	relayWarmups        int
-	probeBase           time.Time
-	probeFrozen         bool
-	probeOffset         time.Duration
-	probe               probeEvidence
+	mu                             sync.Mutex
+	coordinatorSuccesses           int
+	userSuccesses                  int
+	coordinatorPrincipalConsistent bool
+	userPrincipalConsistent        bool
+	unexpectedRoles                int
+	firstCoordinatorPrincipal      *principalBinding
+	firstUserPrincipal             *principalBinding
+	relayWarmups                   int
+	probeBase                      time.Time
+	probeFrozen                    bool
+	probeOffset                    time.Duration
+	probe                          probeEvidence
 }
 
 func newIntegrationState(evidenceFile string) *integrationState {
 	return &integrationState{
-		evidenceFile:        evidenceFile,
-		principalConsistent: true,
+		evidenceFile:                   evidenceFile,
+		coordinatorPrincipalConsistent: true,
+		userPrincipalConsistent:        true,
 	}
 }
 
 func (state *integrationState) evidenceLocked() integrationEvidence {
 	return integrationEvidence{
-		Schema:                             "miakapp.relay-integration-evidence/2",
-		SuccessfulCoordinatorVerifications: state.successes,
-		PrincipalConsistent:                state.principalConsistent,
+		Schema:                             "miakapp.relay-integration-evidence/3",
+		SuccessfulCoordinatorVerifications: state.coordinatorSuccesses,
+		SuccessfulUserVerifications:        state.userSuccesses,
+		CoordinatorPrincipalConsistent:     state.coordinatorPrincipalConsistent,
+		UserPrincipalConsistent:            state.userPrincipalConsistent,
+		UnexpectedRoles:                    state.unexpectedRoles,
 		RelayWarmupSuccesses:               state.relayWarmups,
 		ProbeClockOffsetMilliseconds:       state.probeOffset.Milliseconds(),
 		Probe:                              state.probe,
@@ -120,14 +132,31 @@ func (state *integrationState) recordRelay(identity auth.Identity) error {
 		principalID:     identity.ID,
 		clientID:        identity.ClientID,
 		coordinatorName: identity.CoordinatorName,
+		verifiedEmail:   identity.VerifiedEmail,
 		role:            identity.Role,
 	}
-	if state.firstPrincipal == nil {
-		state.firstPrincipal = &principal
-	} else if *state.firstPrincipal != principal {
-		state.principalConsistent = false
+	switch identity.Role {
+	case auth.RoleCoordinator:
+		if state.firstCoordinatorPrincipal == nil {
+			state.firstCoordinatorPrincipal = &principal
+		} else if *state.firstCoordinatorPrincipal != principal {
+			state.coordinatorPrincipalConsistent = false
+		}
+		state.coordinatorSuccesses++
+	case auth.RoleUser:
+		if state.firstUserPrincipal == nil {
+			state.firstUserPrincipal = &principal
+		} else if *state.firstUserPrincipal != principal {
+			state.userPrincipalConsistent = false
+		}
+		state.userSuccesses++
+	default:
+		state.unexpectedRoles++
+		if err := state.persistLocked(); err != nil {
+			return err
+		}
+		return errors.New("relay verifier returned an unexpected integration role")
 	}
-	state.successes++
 	return state.persistLocked()
 }
 
@@ -197,7 +226,7 @@ type recordingVerifier struct {
 
 func (verifier *recordingVerifier) Verify(ctx context.Context, request auth.Request) (auth.Identity, error) {
 	identity, err := verifier.delegate.Verify(ctx, request)
-	if err != nil || request.Role != auth.RoleCoordinator {
+	if err != nil || (request.Role != auth.RoleCoordinator && request.Role != auth.RoleUser) {
 		return identity, err
 	}
 	if err = verifier.state.recordRelay(identity); err != nil {
@@ -440,10 +469,9 @@ func main() {
 		panic(err)
 	}
 	platformConfig := auth.PlatformConfig{
-		Issuer:            control.ControlURL,
-		JWKSURL:           control.JWKSURL,
-		RelayAudience:     relayURL,
-		FirebaseProjectID: "demo-miakapp-v4",
+		Issuer:        control.ControlURL,
+		JWKSURL:       control.JWKSURL,
+		RelayAudience: relayURL,
 	}
 	relayPlatformVerifier, err := auth.NewPlatformVerifierForIntegration(
 		platformConfig,
@@ -469,7 +497,7 @@ func main() {
 
 	cfg := config.Config{
 		ListenAddress:   listener.Addr().String(),
-		AllowedOrigins:  map[string]struct{}{},
+		AllowedOrigins:  map[string]struct{}{control.ControlURL: {}},
 		Handshake:       5 * time.Second,
 		WriteTimeout:    5 * time.Second,
 		PingInterval:    time.Minute,

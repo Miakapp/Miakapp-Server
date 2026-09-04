@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Miakapp/Miakapp-V3
-          ref: abee78b80383f0e7c900dbcaede3741095f08c35
+          ref: cc3bcd70fdb4b058f990ca2607693a2043faebaf
           path: .contract/miakapp-v3
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Miakapp/MiakAPI
-          ref: 5c26eaa830015d94f53bf05fbbb0f5ebda6d290f
+          ref: a798a746847ba3d5c16128a08b33353269e770a4
           path: miakapi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -82,13 +82,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Miakapp/Miakapp-V3
-          ref: 259173ca730f0763710b7c99afa163ba26e70bb2
+          ref: f9509c41ef1c0389623d31419372e6430a2313d9
           path: .integration/miakapp-v3
       - name: Check out the pinned MiakAPI coordinator SDK
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Miakapp/MiakAPI
-          ref: 5c26eaa830015d94f53bf05fbbb0f5ebda6d290f
+          ref: a798a746847ba3d5c16128a08b33353269e770a4
           path: .integration/miakapi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -115,7 +115,10 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun run build
-      - name: Run the Home Key to relay authentication integration
+      - name: Install the pinned Chromium runtime
+        working-directory: .integration/miakapi
+        run: ./node_modules/.bin/playwright install --with-deps chromium
+      - name: Run the coordinator and browser relay authentication integration
         run: >-
           ./scripts/check-platform-integration.sh
           "$GITHUB_WORKSPACE/.integration/miakapp-v3"

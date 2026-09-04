@@ -59,7 +59,7 @@ func TestControlPlaneJWKSDecoderIsClosedAndBounded(t *testing.T) {
 
 func TestCachePolicyRequiresExactControlPlaneDirectives(t *testing.T) {
 	valid := http.Header{"Cache-Control": []string{"public, max-age=60, must-revalidate"}}
-	if ttl, err := responseCacheTTL(valid, controlPlaneJWKS); err != nil || ttl != time.Minute {
+	if ttl, err := responseCacheTTL(valid); err != nil || ttl != time.Minute {
 		t.Fatalf("unexpected valid cache policy: %v, %v", ttl, err)
 	}
 	invalid := []string{
@@ -71,16 +71,16 @@ func TestCachePolicyRequiresExactControlPlaneDirectives(t *testing.T) {
 		"public, max-age=\"60, must-revalidate",
 	}
 	for _, value := range invalid {
-		if _, err := responseCacheTTL(http.Header{"Cache-Control": []string{value}}, controlPlaneJWKS); err == nil {
+		if _, err := responseCacheTTL(http.Header{"Cache-Control": []string{value}}); err == nil {
 			t.Fatalf("expected cache policy %q to be rejected", value)
 		}
 	}
 	aged := http.Header{
-		"Cache-Control": []string{"public, max-age=3600, must-revalidate"},
-		"Age":           []string{"60"},
+		"Cache-Control": []string{"public, max-age=60, must-revalidate"},
+		"Age":           []string{"1"},
 	}
-	if ttl, err := responseCacheTTL(aged, firebaseCertificates); err != nil || ttl != 59*time.Minute {
-		t.Fatalf("unexpected aged Firebase cache policy: %v, %v", ttl, err)
+	if ttl, err := responseCacheTTL(aged); err != nil || ttl != 59*time.Second {
+		t.Fatalf("unexpected aged control-plane cache policy: %v, %v", ttl, err)
 	}
 	if _, err := canonicalETag(`"strong"`); err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestKeyCacheCoalescesConcurrentFetchesAndRevalidatesWithETag(t *testing.T) 
 	t.Cleanup(server.Close)
 	clock := &lockedClock{now: time.Unix(1_788_211_200, 0)}
 	cache := newKeyCache(keySource{
-		url: server.URL, kind: controlPlaneJWKS, client: server.Client(),
+		url: server.URL, client: server.Client(),
 	}, clock.read)
 
 	const callers = 32
@@ -290,7 +290,7 @@ func TestPublicKeyFetchRejectsRedirects(t *testing.T) {
 	t.Cleanup(redirect.Close)
 	client := redirect.Client()
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	source := keySource{url: redirect.URL, kind: controlPlaneJWKS, client: client}
+	source := keySource{url: redirect.URL, client: client}
 	if _, err := source.fetch(context.Background(), ""); err == nil {
 		t.Fatal("expected public-key redirect to be rejected")
 	}

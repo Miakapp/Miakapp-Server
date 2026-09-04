@@ -29,6 +29,7 @@ func (verifier shortLeaseVerifier) Verify(_ context.Context, request auth.Reques
 		ID:            "user-1",
 		VerifiedEmail: "user@example.test",
 		ExpiresAt:     time.Now().Add(verifier.lifetime),
+		Scopes:        map[string]struct{}{"relay:user": {}},
 	}, nil
 }
 

@@ -5,19 +5,23 @@ connects home coordinators, authenticated users, and future CLI sessions without
 persisting Firebase credentials, Home Keys, push credentials, or product
 business logic.
 
-The standalone binary validates short-lived coordinator and CLI access tokens
-against the configured control-plane JWKS and validates human sessions against
-Firebase public certificates. It holds no verification secret and never calls
-the platform with authenticated authority. The relay remains an implementation
-preview until deployment admission limits and the staging relay integration gate
-have passed; do not deploy it as a production replacement yet.
+The standalone binary validates short-lived coordinator, CLI, and browser-user
+access tokens against the configured control-plane JWKS. Firebase Auth and App
+Check credentials remain on the browser-to-control-plane HTTPS boundary and are
+never relay credentials. The relay holds no verification secret and never calls
+the platform with authenticated authority. It remains an implementation preview
+until deployment admission limits and the staging relay integration gate have
+passed; do not deploy it as a production replacement yet.
 
 ## Contract
 
 The wire contract is owned by Miakapp-V3
-[`RFC 0001`](https://github.com/Miakapp/Miakapp-V3/blob/b927789691dd8cdebc91b673853cdc6711fe057d/docs/rfcs/0001-wire-protocol.md).
-This module pins the independent canonical Go codec at that immutable commit.
-It does not copy frame definitions into this repository.
+[`RFC 0001`](https://github.com/Miakapp/Miakapp-V3/blob/b927789691dd8cdebc91b673853cdc6711fe057d/docs/rfcs/0001-wire-protocol.md),
+and this module pins the canonical Go codec at that immutable commit. Relay
+credential profiles are owned by
+[`RFC 0004`](https://github.com/Miakapp/Miakapp-V3/blob/cc3bcd70fdb4b058f990ca2607693a2043faebaf/docs/rfcs/0004-platform-control-plane.md),
+with the independent Go verifier pinned at that second commit. This repository
+does not copy either contract.
 
 The implemented vertical slice includes:
 
@@ -71,15 +75,16 @@ cd /absolute/path/to/Miakapp-Server
 ./scripts/check-miakapi-integration.sh /absolute/path/to/MiakAPI
 ```
 
-The gate serves the MiakAPI browser fixture from loopback HTTPS, allows exactly
-that page Origin, and executes it in headless Chromium against the real relay.
+This smaller gate serves the MiakAPI browser fixture from loopback HTTPS, allows
+exactly that page Origin, and executes it in headless Chromium against the real
+relay.
 It proves enrollment, initial state, one patch, one call/result and scheduled
 reauthentication on one WebSocket. A second call succeeds after the original
 four-second lease expires, proving the correlated renewal completed without a
 reconnect. The fixture uses only synthetic tokens and emits a closed semantic
 JSON result; browser traces and WebSocket frame inspection stay disabled. It
-does not prove Google's live Firebase certificate path or memory isolation from
-a malicious relay.
+does not exercise the control-plane credential exchange or memory isolation
+from a malicious relay.
 
 Run the production authentication adapter against the canonical control-plane
 vectors:
@@ -88,9 +93,9 @@ vectors:
 ./scripts/check-control-plane-integration.sh /absolute/path/to/Miakapp-V3
 ```
 
-Run the synthetic Home Key through the real emulator control plane, MiakAPI
-provider, scheduled SDK reauthentication, and production relay verifier after
-building both external checkouts:
+Run the synthetic Home Key and browser source credentials through the real
+emulator control plane, MiakAPI providers, scheduled SDK reauthentication, and
+production relay verifier after building both external checkouts:
 
 ```sh
 ./scripts/check-platform-integration.sh /absolute/path/to/Miakapp-V3 /absolute/path/to/MiakAPI
@@ -98,18 +103,25 @@ building both external checkouts:
 
 This gate uses only loopback HTTPS, the `demo-miakapp-v4` Auth and Firestore
 emulators, ephemeral certificates, Home Key and control-secret files, and two
-independent instances of the production verifier cache. A fake-clock probe cache
-proves one shared refresh for 32 concurrent future-key tokens, the ten-second
-random-`kid` abuse bound, conditional expiry revalidation, fail-closed outage
-handling and bounded recovery. The real-time cache remains on the relay socket
-while the SDK changes signing key during scheduled `REAUTH` without changing its
-principal or reconnecting. Integration-only constructors and authenticated
-loopback controls are excluded from normal relay builds; evidence records only
-bounded counters and consistency booleans, never tokens or claims.
+independent instances of the production verifier cache. It creates an unenrolled
+synthetic Auth user and a signed synthetic App Check token in one private
+temporary file. Because the Auth emulator emits deliberately unsigned JWTs, the
+browser fixture applies a local shape adapter before the strict public provider
+and restores the exact emulator token at the HTTPS boundary; production code is
+not relaxed. The real control plane then issues the audience-bound user token.
 
-This local gate uses canonical synthetic keys. It does not claim live Cloud KMS
-version rotation, Google's Firebase certificate endpoint, or public-ingress
-behavior.
+A fake-clock probe cache proves one shared refresh for 32 concurrent future-key
+tokens, the ten-second random-`kid` abuse bound, conditional expiry revalidation,
+fail-closed outage handling, and bounded recovery. The real-time relay cache
+survives signing-key rotation while a coordinator and a real Chromium browser
+each complete same-socket `REAUTH`. The fixture then changes the authoritative
+Home relay, and the browser carries that single new credential to a second real
+relay without another exchange or overlapping sockets. It recovers state and
+executes calls on both relays. Integration-only constructors and authenticated
+loopback controls are excluded from normal relay builds; transient frame checks
+emit only bounded counters and a source-credential-presence boolean, never
+tokens, claims, or frame contents. This local gate does not claim live Cloud KMS
+rotation or public-ingress behavior.
 
 CI checks out both repositories at immutable commits so relay changes cannot
 silently drift against moving protocol, authentication, or SDK dependencies.
@@ -130,7 +142,6 @@ The executable reads:
 | `MIAKAPP_CONTROL_PLANE_ISSUER` | required | Exact HTTPS control-plane issuer origin |
 | `MIAKAPP_CONTROL_PLANE_JWKS_URL` | required | Same-origin `/.well-known/jwks.json` endpoint |
 | `MIAKAPP_RELAY_AUDIENCE` | required | Exact public `wss://.../ws` URL for this relay |
-| `MIAKAPP_FIREBASE_PROJECT_ID` | required | Firebase project accepted for human sessions |
 | `MIAKAPP_HANDSHAKE_TIMEOUT` | `5s` | Maximum wait for HELLO and authentication |
 | `MIAKAPP_WRITE_TIMEOUT` | `5s` | One WebSocket write deadline |
 | `MIAKAPP_PING_INTERVAL` | `30s` | RFC 6455 liveness interval |
@@ -151,25 +162,31 @@ identity lease; the relay independently binds that lease to the requested role,
 home, coordinator name, principal ID, Home Key client ID, and expiry.
 Reauthentication cannot change the established principal or switch Home Keys.
 
-Coordinator and CLI tokens use the canonical Ed25519 profile from RFC 0004. The
-relay pins one issuer, one audience and one same-origin JWKS URL. The JWKS client
-accepts no redirects, bounds responses to 64 KiB and 16 exact Ed25519 keys,
-requires the specified ETag and 60-second cache policy, coalesces concurrent
+Coordinator, CLI, and browser-user tokens use distinct canonical Ed25519
+profiles from RFC 0004. The browser profile contains exactly one relay audience,
+Home ID, Firebase UID, `miakapp_role=user`, `scope=relay:user`, a maximum
+five-minute lease, and an optional verified email; it contains no Home Key client
+or coordinator claim. HELLO may only bind the already verified user to the same
+Home. Firebase ID and App Check tokens are rejected as relay credentials.
+
+The relay pins one issuer, one audience, and one same-origin JWKS URL. The JWKS
+client accepts no redirects, bounds responses to 64 KiB and 16 exact Ed25519
+keys, requires the specified ETag and 60-second cache policy, coalesces concurrent
 refreshes, and permits at most one unknown-key refresh per ten seconds. Expired
 caches fail closed if they cannot be refreshed.
 
-Human sessions use Firebase ID tokens, the pinned Firebase project/issuer and
-Google's fixed Secure Token certificate endpoint. Certificate lifetime follows
-the endpoint's `Cache-Control` maximum age. This local verification deliberately
-does not claim immediate Firebase account-disablement or token-revocation checks;
-the browser must reauthenticate before its current ID-token lease expires.
+The selected relay still observes plaintext Home traffic and must therefore be
+an official instance, self-hosted by the user, or operated by somebody the user
+explicitly trusts. Self-hosting requires configuring the relay's exact public
+WSS URL in the authoritative Home record and as `MIAKAPP_RELAY_AUDIENCE`; a token
+issued for another relay cannot be replayed here. The relay needs only public
+control-plane configuration and no Firebase or Miakapp credential.
 
-Under the current RFC 0004 profile, the selected relay necessarily receives the
-Firebase ID token as a reusable bearer credential and observes home traffic.
-Users may therefore select only an official relay or one they explicitly trust
-as completely as the Miakapp backend. Arbitrary community-relay selection must
-remain disabled until the control plane can issue a short-lived credential bound
-to one relay audience, home, user and role.
+This credential transition is intentionally fail-closed rather than dual-stack:
+an old Firebase-token relay rejects the new user profile, and this relay rejects
+Firebase source tokens. Roll out compatible control-plane, browser SDK, and relay
+revisions together, retain the previous complete set for rollback, and do not
+route browser traffic to a partially upgraded relay.
 
 This preview is not yet the deployment admission-control boundary. Per-IP
 connection limits, total-home admission, and aggregate cross-connection memory

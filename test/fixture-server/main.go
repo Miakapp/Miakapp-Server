@@ -32,22 +32,25 @@ func (verifier) Verify(_ context.Context, request auth.Request) (auth.Identity, 
 			ClientID:        "integration-client",
 			CoordinatorName: "integration",
 			ExpiresAt:       time.Now().Add(10 * time.Minute),
+			Scopes:          map[string]struct{}{"relay:coordinator": {}},
 		}, nil
-	case "integration-user-token":
+	case "integration.user.initial":
 		return auth.Identity{
 			Role:          auth.RoleUser,
 			HomeID:        "integration-home",
 			ID:            "integration-user",
 			VerifiedEmail: "integration@example.test",
 			ExpiresAt:     time.Now().Add(4 * time.Second),
+			Scopes:        map[string]struct{}{"relay:user": {}},
 		}, nil
-	case "integration-user-token-new":
+	case "integration.user.renewed":
 		return auth.Identity{
 			Role:          auth.RoleUser,
 			HomeID:        "integration-home",
 			ID:            "integration-user",
 			VerifiedEmail: "integration@example.test",
-			ExpiresAt:     time.Now().Add(10 * time.Minute),
+			ExpiresAt:     time.Now().Add(30 * time.Second),
+			Scopes:        map[string]struct{}{"relay:user": {}},
 		}, nil
 	default:
 		return auth.Identity{}, auth.Failure(auth.ErrRejected, nil)

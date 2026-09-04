@@ -29,6 +29,7 @@ func (fixtureVerifier) Verify(_ context.Context, request auth.Request) (auth.Ide
 			ClientID:        "client-1",
 			CoordinatorName: "automation",
 			ExpiresAt:       expiry,
+			Scopes:          map[string]struct{}{"relay:coordinator": {}},
 		}, nil
 	case "coordinator-token-changed-client":
 		return auth.Identity{
@@ -38,6 +39,7 @@ func (fixtureVerifier) Verify(_ context.Context, request auth.Request) (auth.Ide
 			ClientID:        "client-2",
 			CoordinatorName: "automation",
 			ExpiresAt:       expiry,
+			Scopes:          map[string]struct{}{"relay:coordinator": {}},
 		}, nil
 	case "coordinator-b-token":
 		return auth.Identity{
@@ -47,6 +49,7 @@ func (fixtureVerifier) Verify(_ context.Context, request auth.Request) (auth.Ide
 			ClientID:        "client-3",
 			CoordinatorName: "secondary",
 			ExpiresAt:       expiry,
+			Scopes:          map[string]struct{}{"relay:coordinator": {}},
 		}, nil
 	case "user-token", "user-token-new":
 		return auth.Identity{
@@ -55,6 +58,7 @@ func (fixtureVerifier) Verify(_ context.Context, request auth.Request) (auth.Ide
 			ID:            "user-1",
 			VerifiedEmail: "user@example.test",
 			ExpiresAt:     expiry,
+			Scopes:        map[string]struct{}{"relay:user": {}},
 		}, nil
 	case "user-token-changed":
 		return auth.Identity{
@@ -63,6 +67,7 @@ func (fixtureVerifier) Verify(_ context.Context, request auth.Request) (auth.Ide
 			ID:            "user-2",
 			VerifiedEmail: "other@example.test",
 			ExpiresAt:     expiry,
+			Scopes:        map[string]struct{}{"relay:user": {}},
 		}, nil
 	default:
 		return auth.Identity{}, auth.Failure(auth.ErrRejected, nil)

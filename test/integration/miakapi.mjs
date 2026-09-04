@@ -115,7 +115,7 @@ try {
   }
 
   await eventually(
-    () => page.evaluate(() => globalThis.miakappIntegration.tokenReasons()),
+    () => page.evaluate(() => globalThis.miakappIntegration.credentialReasons()),
     (reasons) => reasons.includes('reauth'),
     'the scheduled browser reauthentication attempt',
   );
@@ -133,13 +133,21 @@ try {
   const browserStatus = await page.evaluate(() => ({
     failures: globalThis.miakappIntegration.failures(),
     statuses: globalThis.miakappIntegration.statuses(),
-    tokenReasons: globalThis.miakappIntegration.tokenReasons(),
+    credentialReasons: globalThis.miakappIntegration.credentialReasons(),
   }));
   if (browserStatus.failures.length !== 0
     || browserStatus.statuses.at(-1) !== 'ready'
-    || browserStatus.tokenReasons.includes('reconnect')
+    || browserStatus.credentialReasons.includes('reconnect')
     || websocketCount !== 1
     || pageErrorCount !== 0) {
+    process.stderr.write(`${JSON.stringify({
+      schema: 'miakapp.sdk-browser-integration-diagnostic/1',
+      failures: browserStatus.failures,
+      statuses: browserStatus.statuses,
+      credential_reasons: browserStatus.credentialReasons,
+      websocket_count: websocketCount,
+      page_error_count: pageErrorCount,
+    })}\n`);
     throw new Error('Browser lifecycle produced an unexpected failure or reconnect');
   }
 
