@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	controlplane "github.com/miakapp/miakapp-v3/control-plane-contract/go"
 )
 
 func validJWKSBody() string {
@@ -142,6 +144,46 @@ func TestKeyCacheCoalescesConcurrentFetchesAndRevalidatesWithETag(t *testing.T) 
 	keys, err := cache.current(context.Background())
 	if err != nil || len(keys) != 1 || fetches.Load() != 2 {
 		t.Fatalf("conditional revalidation failed: keys=%#v fetches=%d error=%v", keys, fetches.Load(), err)
+	}
+}
+
+func TestUnknownKIDRefreshJoinsAnActiveRefreshBeforeApplyingTheAbuseWindow(t *testing.T) {
+	now := time.Unix(1_788_211_200, 0)
+	refreshDone := make(chan struct{})
+	cache := &keyCache{
+		now:                func() time.Time { return now },
+		keys:               []controlplane.PublicJWK{{KID: "old-key"}},
+		expiresAt:          now.Add(time.Minute),
+		refreshing:         true,
+		refreshDone:        refreshDone,
+		nextUnknownRefresh: now.Add(unknownKIDRefreshDelay),
+	}
+	type result struct {
+		keys      []controlplane.PublicJWK
+		refreshed bool
+		err       error
+	}
+	completed := make(chan result, 1)
+	go func() {
+		keys, refreshed, err := cache.refreshUnknownKID(context.Background())
+		completed <- result{keys: keys, refreshed: refreshed, err: err}
+	}()
+
+	select {
+	case received := <-completed:
+		t.Fatalf("unknown-key caller bypassed the active refresh: %#v", received)
+	case <-time.After(25 * time.Millisecond):
+	}
+	cache.mu.Lock()
+	cache.keys = []controlplane.PublicJWK{{KID: "new-key"}}
+	cache.refreshing = false
+	close(refreshDone)
+	cache.mu.Unlock()
+
+	received := <-completed
+	if received.err != nil || !received.refreshed ||
+		len(received.keys) != 1 || received.keys[0].KID != "new-key" {
+		t.Fatalf("unknown-key caller did not join the active refresh: %#v", received)
 	}
 }
 

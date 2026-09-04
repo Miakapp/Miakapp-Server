@@ -76,7 +76,10 @@ func (cache *keyCache) current(ctx context.Context) ([]controlplane.PublicJWK, e
 func (cache *keyCache) refreshUnknownKID(ctx context.Context) ([]controlplane.PublicJWK, bool, error) {
 	cache.mu.Lock()
 	now := cache.now()
-	if len(cache.keys) > 0 && now.Before(cache.expiresAt) && now.Before(cache.nextUnknownRefresh) {
+	if len(cache.keys) > 0 &&
+		now.Before(cache.expiresAt) &&
+		!cache.refreshing &&
+		now.Before(cache.nextUnknownRefresh) {
 		keys := cloneKeys(cache.keys)
 		cache.mu.Unlock()
 		return keys, false, nil
@@ -96,6 +99,17 @@ func (cache *keyCache) load(ctx context.Context, force bool) ([]controlplane.Pub
 			keys := cloneKeys(cache.keys)
 			cache.mu.Unlock()
 			return keys, nil
+		}
+		if force && cache.refreshing {
+			finished := cache.refreshDone
+			cache.mu.Unlock()
+			select {
+			case <-finished:
+				force = false
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 		}
 		if force && fresh && now.Before(cache.nextUnknownRefresh) {
 			keys := cloneKeys(cache.keys)

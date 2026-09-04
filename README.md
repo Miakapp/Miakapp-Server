@@ -82,10 +82,19 @@ building both external checkouts:
 ```
 
 This gate uses only loopback HTTPS, the `demo-miakapp-v4` Auth and Firestore
-emulators, and an ephemeral certificate and Home Key file. Its integration-only
-Go constructor changes the verifier HTTP client's trust roots but leaves the
-production claim, JWKS cache, binding, relay, and SDK paths intact. The
-constructor is excluded from normal relay builds.
+emulators, ephemeral certificates, Home Key and control-secret files, and two
+independent instances of the production verifier cache. A fake-clock probe cache
+proves one shared refresh for 32 concurrent future-key tokens, the ten-second
+random-`kid` abuse bound, conditional expiry revalidation, fail-closed outage
+handling and bounded recovery. The real-time cache remains on the relay socket
+while the SDK changes signing key during scheduled `REAUTH` without changing its
+principal or reconnecting. Integration-only constructors and authenticated
+loopback controls are excluded from normal relay builds; evidence records only
+bounded counters and consistency booleans, never tokens or claims.
+
+This local gate uses canonical synthetic keys. It does not claim live Cloud KMS
+version rotation, Google's Firebase certificate endpoint, or public-ingress
+behavior.
 
 CI checks out both repositories at immutable commits so relay changes cannot
 silently drift against moving protocol, authentication, or SDK dependencies.
