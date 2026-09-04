@@ -1,13 +1,20 @@
-FROM node:lts-hydrogen
+FROM golang:1.26.6-alpine@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS build
 
-WORKDIR /app
-COPY package*.json ./
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
 
-RUN npm ci --only=production
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 GOOS=linux go build \
+  -trimpath \
+  -ldflags='-s -w' \
+  -o /out/miakapp-server \
+  ./cmd/miakapp-server
 
-COPY . .
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
-RUN npm install
+COPY --from=build /out/miakapp-server /usr/local/bin/miakapp-server
+
 EXPOSE 3000
-
-CMD ["npm", "start"]
+ENTRYPOINT ["/usr/local/bin/miakapp-server"]
