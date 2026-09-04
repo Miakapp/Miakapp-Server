@@ -50,6 +50,7 @@ Requirements:
 - Docker for image checks
 - Bun 1.2.23 and Node.js 22.22 or newer for the optional MiakAPI integration
   check
+- Java 21 and OpenSSL for the optional full control-plane integration check
 
 Run the Go checks:
 
@@ -71,6 +72,20 @@ vectors:
 ```sh
 ./scripts/check-control-plane-integration.sh /absolute/path/to/Miakapp-V3
 ```
+
+Run the synthetic Home Key through the real emulator control plane, MiakAPI
+provider, scheduled SDK reauthentication, and production relay verifier after
+building both external checkouts:
+
+```sh
+./scripts/check-platform-integration.sh /absolute/path/to/Miakapp-V3 /absolute/path/to/MiakAPI
+```
+
+This gate uses only loopback HTTPS, the `demo-miakapp-v4` Auth and Firestore
+emulators, and an ephemeral certificate and Home Key file. Its integration-only
+Go constructor changes the verifier HTTP client's trust roots but leaves the
+production claim, JWKS cache, binding, relay, and SDK paths intact. The
+constructor is excluded from normal relay builds.
 
 CI checks out both repositories at immutable commits so relay changes cannot
 silently drift against moving protocol, authentication, or SDK dependencies.
