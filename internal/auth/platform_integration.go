@@ -32,8 +32,7 @@ func NewPlatformVerifierForIntegration(
 		},
 	}
 	return newPlatformVerifier(config, platformDependencies{
-		client:                  client,
-		now:                     now,
-		firebaseCertificatesURL: config.Issuer + "/firebase-certificates",
+		client: client,
+		now:    now,
 	})
 }

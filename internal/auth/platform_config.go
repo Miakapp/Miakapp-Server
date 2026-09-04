@@ -4,30 +4,23 @@ import (
 	"errors"
 	"net/url"
 	"os"
-	"regexp"
 	"strings"
 )
-
-const firebaseCertificateURL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
-
-var firebaseProjectIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
 
 // PlatformConfig pins every authority used by the production verifier. None of
 // these values is a credential; deployments may publish them verbatim.
 type PlatformConfig struct {
-	Issuer            string
-	JWKSURL           string
-	RelayAudience     string
-	FirebaseProjectID string
+	Issuer        string
+	JWKSURL       string
+	RelayAudience string
 }
 
 // LoadPlatformConfig reads the closed production authentication configuration.
 func LoadPlatformConfig() (PlatformConfig, error) {
 	config := PlatformConfig{
-		Issuer:            os.Getenv("MIAKAPP_CONTROL_PLANE_ISSUER"),
-		JWKSURL:           os.Getenv("MIAKAPP_CONTROL_PLANE_JWKS_URL"),
-		RelayAudience:     os.Getenv("MIAKAPP_RELAY_AUDIENCE"),
-		FirebaseProjectID: os.Getenv("MIAKAPP_FIREBASE_PROJECT_ID"),
+		Issuer:        os.Getenv("MIAKAPP_CONTROL_PLANE_ISSUER"),
+		JWKSURL:       os.Getenv("MIAKAPP_CONTROL_PLANE_JWKS_URL"),
+		RelayAudience: os.Getenv("MIAKAPP_RELAY_AUDIENCE"),
 	}
 	if err := config.Validate(); err != nil {
 		return PlatformConfig{}, err
@@ -52,9 +45,6 @@ func (config PlatformConfig) Validate() error {
 	relay, err := canonicalURL(config.RelayAudience, "wss", true)
 	if err != nil || !strings.HasSuffix(relay.Path, "/ws") {
 		return errors.New("MIAKAPP_RELAY_AUDIENCE must be a canonical WSS URL ending in /ws")
-	}
-	if !firebaseProjectIDPattern.MatchString(config.FirebaseProjectID) {
-		return errors.New("MIAKAPP_FIREBASE_PROJECT_ID is invalid")
 	}
 	return nil
 }

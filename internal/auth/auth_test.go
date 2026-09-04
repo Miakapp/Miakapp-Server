@@ -16,6 +16,7 @@ func validIdentity() Identity {
 		ClientID:        "client-1",
 		CoordinatorName: "automation",
 		ExpiresAt:       time.Now().Add(time.Minute),
+		Scopes:          map[string]struct{}{"relay:coordinator": {}},
 	}
 }
 
@@ -35,6 +36,9 @@ func TestValidateBindingRejectsPrincipalChanges(t *testing.T) {
 		{name: "coordinator", mutate: func(identity *Identity) { identity.CoordinatorName = "other" }, kind: ErrRejected},
 		{name: "long ID", mutate: func(identity *Identity) { identity.ID = strings.Repeat("x", 129) }, kind: ErrRejected},
 		{name: "missing client", mutate: func(identity *Identity) { identity.ClientID = "" }, kind: ErrRejected},
+		{name: "missing scope", mutate: func(identity *Identity) { identity.Scopes = nil }, kind: ErrRejected},
+		{name: "wrong scope", mutate: func(identity *Identity) { identity.Scopes = map[string]struct{}{"relay:user": {}} }, kind: ErrRejected},
+		{name: "multiple scopes", mutate: func(identity *Identity) { identity.Scopes["relay:user"] = struct{}{} }, kind: ErrRejected},
 		{name: "control character", mutate: func(identity *Identity) { identity.ID = "home\n1" }, kind: ErrRejected},
 		{name: "invalid email", mutate: func(identity *Identity) { identity.VerifiedEmail = "user\x00@example.test" }, kind: ErrRejected},
 		{name: "unrepresentable expiry", mutate: func(identity *Identity) { identity.ExpiresAt = time.UnixMilli(9_007_199_254_740_992) }, kind: ErrRejected},
@@ -49,6 +53,33 @@ func TestValidateBindingRejectsPrincipalChanges(t *testing.T) {
 				t.Fatalf("expected %s failure, received %v", test.kind, err)
 			}
 		})
+	}
+}
+
+func TestValidateBindingRequiresTokenBoundUserHomeAndShape(t *testing.T) {
+	now := time.Now()
+	identity := Identity{
+		Role:          RoleUser,
+		HomeID:        "home-1",
+		ID:            "firebase-user",
+		VerifiedEmail: "user@example.test",
+		ExpiresAt:     now.Add(time.Minute),
+		Scopes:        map[string]struct{}{"relay:user": {}},
+	}
+	if err := ValidateBinding(Request{Role: RoleUser, HomeID: "home-1"}, identity, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range []Request{
+		{Role: RoleUser},
+		{Role: RoleUser, HomeID: "home-2"},
+	} {
+		if err := ValidateBinding(request, identity, now); Kind(err) != ErrRejected {
+			t.Fatalf("expected user Home binding rejection, received %v", err)
+		}
+	}
+	identity.ClientID = "home-key-client"
+	if err := ValidateBinding(Request{Role: RoleUser, HomeID: "home-1"}, identity, now); Kind(err) != ErrRejected {
+		t.Fatalf("expected user client binding rejection, received %v", err)
 	}
 }
 

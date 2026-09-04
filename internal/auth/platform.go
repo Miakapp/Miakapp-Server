@@ -10,18 +10,16 @@ import (
 )
 
 type platformDependencies struct {
-	client                  *http.Client
-	now                     func() time.Time
-	firebaseCertificatesURL string
+	client *http.Client
+	now    func() time.Time
 }
 
-// PlatformVerifier validates Miakapp access tokens and Firebase ID tokens
-// without holding a platform secret or making an authenticated request.
+// PlatformVerifier validates Miakapp access tokens without holding a platform
+// secret or making an authenticated request.
 type PlatformVerifier struct {
-	config       PlatformConfig
-	now          func() time.Time
-	controlKeys  *keyCache
-	firebaseKeys *keyCache
+	config      PlatformConfig
+	now         func() time.Time
+	controlKeys *keyCache
 }
 
 // NewPlatformVerifier constructs the production verifier with pinned HTTPS
@@ -34,9 +32,8 @@ func NewPlatformVerifier(config PlatformConfig) (*PlatformVerifier, error) {
 		},
 	}
 	return newPlatformVerifier(config, platformDependencies{
-		client:                  client,
-		now:                     time.Now,
-		firebaseCertificatesURL: firebaseCertificateURL,
+		client: client,
+		now:    time.Now,
 	})
 }
 
@@ -47,23 +44,17 @@ func newPlatformVerifier(config PlatformConfig, dependencies platformDependencie
 	if dependencies.client == nil || dependencies.now == nil {
 		return nil, errors.New("platform verifier dependencies are incomplete")
 	}
-	if _, err := canonicalURL(dependencies.firebaseCertificatesURL, "https", true); err != nil {
-		return nil, errors.New("Firebase certificate endpoint is invalid")
-	}
 	return &PlatformVerifier{
 		config: config,
 		now:    dependencies.now,
 		controlKeys: newKeyCache(keySource{
-			url: config.JWKSURL, kind: controlPlaneJWKS, client: dependencies.client,
-		}, dependencies.now),
-		firebaseKeys: newKeyCache(keySource{
-			url: dependencies.firebaseCertificatesURL, kind: firebaseCertificates, client: dependencies.client,
+			url: config.JWKSURL, client: dependencies.client,
 		}, dependencies.now),
 	}, nil
 }
 
 // Verify derives the immutable relay principal exclusively from verified token
-// claims and the HELLO home context used by Firebase users.
+// claims. HELLO fields are checked separately as connection bindings.
 func (verifier *PlatformVerifier) Verify(ctx context.Context, request Request) (Identity, error) {
 	switch request.Role {
 	case RoleCoordinator:
@@ -71,7 +62,7 @@ func (verifier *PlatformVerifier) Verify(ctx context.Context, request Request) (
 	case RoleCLI:
 		return verifier.verifyAccess(ctx, request, "cli", "relay:cli")
 	case RoleUser:
-		return verifier.verifyFirebase(ctx, request)
+		return verifier.verifyAccess(ctx, request, "user", "relay:user")
 	default:
 		return Identity{}, Failure(ErrRejected, errors.New("unsupported authentication role"))
 	}
@@ -87,37 +78,77 @@ func (verifier *PlatformVerifier) verifyAccess(
 	if err != nil {
 		return Identity{}, Failure(ErrTemporary, err)
 	}
-	identity, verifyErr := verifier.verifyMiakappToken(request.Token, profile, keys)
+	verified, verifyErr := verifier.verifyMiakappToken(request.Token, profile, keys)
 	if controlplane.VerificationCode(verifyErr) == controlplane.UnknownKID {
 		keys, err = verifier.controlKeys.refreshUnknownKID(ctx)
 		if err != nil {
 			return Identity{}, Failure(ErrTemporary, err)
 		}
-		identity, verifyErr = verifier.verifyMiakappToken(request.Token, profile, keys)
+		verified, verifyErr = verifier.verifyMiakappToken(request.Token, profile, keys)
 	}
 	if verifyErr != nil {
 		return Identity{}, verificationFailureForContract(verifyErr)
 	}
-	coordinatorName := ""
-	if identity.CoordinatorName != nil {
-		coordinatorName = *identity.CoordinatorName
+	return mapAccessIdentity(verified, profile, scope)
+}
+
+func mapAccessIdentity(
+	verified controlplane.AccessIdentity,
+	profile string,
+	scope string,
+) (Identity, error) {
+	scopes := map[string]struct{}{scope: {}}
+	switch identity := verified.(type) {
+	case *controlplane.HomeKeyAccessIdentity:
+		if profile == "user" || identity.Scope != scope || identity.Role == nil || *identity.Role != profile {
+			return Identity{}, Failure(ErrRejected, errors.New("unexpected Home Key access-token profile"))
+		}
+		coordinatorName := ""
+		if identity.CoordinatorName != nil {
+			coordinatorName = *identity.CoordinatorName
+		}
+		if (profile == "coordinator") != (coordinatorName != "") {
+			return Identity{}, Failure(ErrRejected, errors.New("unexpected coordinator access-token binding"))
+		}
+		role := RoleCLI
+		if profile == "coordinator" {
+			role = RoleCoordinator
+		}
+		return Identity{
+			Role:            role,
+			HomeID:          identity.HomeID,
+			ID:              identity.PrincipalID,
+			ClientID:        identity.ClientID,
+			CoordinatorName: coordinatorName,
+			ExpiresAt:       time.Unix(identity.ExpiresAt, 0),
+			Scopes:          scopes,
+		}, nil
+	case *controlplane.UserAccessIdentity:
+		if profile != "user" || identity.Scope != scope || identity.Role != "user" {
+			return Identity{}, Failure(ErrRejected, errors.New("unexpected user access-token profile"))
+		}
+		verifiedEmail := ""
+		if identity.VerifiedEmail != nil {
+			verifiedEmail = *identity.VerifiedEmail
+		}
+		return Identity{
+			Role:          RoleUser,
+			HomeID:        identity.HomeID,
+			ID:            identity.PrincipalID,
+			VerifiedEmail: verifiedEmail,
+			ExpiresAt:     time.Unix(identity.ExpiresAt, 0),
+			Scopes:        scopes,
+		}, nil
+	default:
+		return Identity{}, Failure(ErrRejected, errors.New("unsupported access-token identity"))
 	}
-	return Identity{
-		Role:            request.Role,
-		HomeID:          identity.HomeID,
-		ID:              identity.PrincipalID,
-		ClientID:        identity.ClientID,
-		CoordinatorName: coordinatorName,
-		ExpiresAt:       time.Unix(identity.ExpiresAt, 0),
-		Scopes:          map[string]struct{}{scope: {}},
-	}, nil
 }
 
 func (verifier *PlatformVerifier) verifyMiakappToken(
 	token string,
 	profile string,
 	keys []controlplane.PublicJWK,
-) (*controlplane.AccessIdentity, error) {
+) (controlplane.AccessIdentity, error) {
 	fixture := &controlplane.Fixture{
 		Now: verifier.now().Unix(),
 		Deployment: controlplane.Deployment{
@@ -126,49 +157,6 @@ func (verifier *PlatformVerifier) verifyMiakappToken(
 		},
 	}
 	return controlplane.VerifyMiakappAccessToken(token, fixture, profile, keys)
-}
-
-func (verifier *PlatformVerifier) verifyFirebase(ctx context.Context, request Request) (Identity, error) {
-	keys, err := verifier.firebaseKeys.current(ctx)
-	if err != nil {
-		return Identity{}, Failure(ErrTemporary, err)
-	}
-	identity, verifyErr := verifier.verifyFirebaseToken(request.Token, keys)
-	if controlplane.VerificationCode(verifyErr) == controlplane.UnknownKID {
-		keys, err = verifier.firebaseKeys.refreshUnknownKID(ctx)
-		if err != nil {
-			return Identity{}, Failure(ErrTemporary, err)
-		}
-		identity, verifyErr = verifier.verifyFirebaseToken(request.Token, keys)
-	}
-	if verifyErr != nil {
-		return Identity{}, verificationFailureForContract(verifyErr)
-	}
-	verifiedEmail := ""
-	if identity.VerifiedEmail != nil {
-		verifiedEmail = *identity.VerifiedEmail
-	}
-	return Identity{
-		Role:          RoleUser,
-		HomeID:        request.HomeID,
-		ID:            identity.UserID,
-		VerifiedEmail: verifiedEmail,
-		ExpiresAt:     time.Unix(identity.ExpiresAt, 0),
-	}, nil
-}
-
-func (verifier *PlatformVerifier) verifyFirebaseToken(
-	token string,
-	keys []controlplane.PublicJWK,
-) (*controlplane.FirebaseIdentity, error) {
-	fixture := &controlplane.Fixture{
-		Now: verifier.now().Unix(),
-		Firebase: controlplane.FirebaseProfile{
-			ProjectID: verifier.config.FirebaseProjectID,
-			Issuer:    "https://securetoken.google.com/" + verifier.config.FirebaseProjectID,
-		},
-	}
-	return controlplane.VerifyFirebaseIDToken(token, fixture, keys)
 }
 
 func verificationFailureForContract(err error) error {

@@ -3,11 +3,8 @@ package auth
 import (
 	"bytes"
 	"context"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -27,14 +24,6 @@ const (
 	maximumPublicKeys       = 16
 	unknownKIDRefreshDelay  = 10 * time.Second
 	failedFetchRetryDelay   = time.Second
-	maximumFirebaseCacheTTL = 24 * time.Hour
-)
-
-type keyDocumentKind uint8
-
-const (
-	controlPlaneJWKS keyDocumentKind = iota
-	firebaseCertificates
 )
 
 type keyFetchResult struct {
@@ -46,7 +35,6 @@ type keyFetchResult struct {
 
 type keySource struct {
 	url    string
-	kind   keyDocumentKind
 	client *http.Client
 }
 
@@ -201,7 +189,7 @@ func (source keySource) fetch(ctx context.Context, etag string) (keyFetchResult,
 	}
 	defer response.Body.Close()
 
-	ttl, err := responseCacheTTL(response.Header, source.kind)
+	ttl, err := responseCacheTTL(response.Header)
 	if err != nil {
 		return keyFetchResult{}, err
 	}
@@ -226,19 +214,11 @@ func (source keySource) fetch(ctx context.Context, etag string) (keyFetchResult,
 	if err != nil {
 		return keyFetchResult{}, err
 	}
-	var keys []controlplane.PublicJWK
-	var responseETag string
-	if source.kind == controlPlaneJWKS {
-		responseETag, err = canonicalETag(response.Header.Get("ETag"))
-		if err == nil {
-			keys, err = decodeControlPlaneJWKS(body)
-		}
-	} else {
-		keys, err = decodeFirebaseCertificates(body)
-		if rawETag := response.Header.Get("ETag"); rawETag != "" {
-			responseETag, err = canonicalETag(rawETag)
-		}
+	responseETag, err := canonicalETag(response.Header.Get("ETag"))
+	if err != nil {
+		return keyFetchResult{}, err
 	}
+	keys, err := decodeControlPlaneJWKS(body)
 	if err != nil {
 		return keyFetchResult{}, err
 	}
@@ -259,7 +239,7 @@ func readBoundedBody(reader io.Reader) ([]byte, error) {
 	return body, nil
 }
 
-func responseCacheTTL(header http.Header, kind keyDocumentKind) (time.Duration, error) {
+func responseCacheTTL(header http.Header) (time.Duration, error) {
 	directives := make(map[string]string)
 	for _, raw := range header.Values("Cache-Control") {
 		for _, part := range strings.Split(raw, ",") {
@@ -290,14 +270,10 @@ func responseCacheTTL(header http.Header, kind keyDocumentKind) (time.Duration, 
 	if !exists || err != nil || maxAge < 1 {
 		return 0, errors.New("public-key cache control has no positive max-age")
 	}
-	if kind == controlPlaneJWKS {
-		_, hasPublic := directives["public"]
-		_, hasMustRevalidate := directives["must-revalidate"]
-		if maxAge != 60 || !hasPublic || !hasMustRevalidate || directives["public"] != "" || directives["must-revalidate"] != "" || len(directives) != 3 {
-			return 0, errors.New("control-plane JWKS cache control does not match the required policy")
-		}
-	} else if maxAge > int64(maximumFirebaseCacheTTL/time.Second) {
-		return 0, errors.New("Firebase certificate cache lifetime is overlong")
+	_, hasPublic := directives["public"]
+	_, hasMustRevalidate := directives["must-revalidate"]
+	if maxAge != 60 || !hasPublic || !hasMustRevalidate || directives["public"] != "" || directives["must-revalidate"] != "" || len(directives) != 3 {
+		return 0, errors.New("control-plane JWKS cache control does not match the required policy")
 	}
 	age := int64(0)
 	if ageText := header.Get("Age"); ageText != "" {
@@ -446,72 +422,6 @@ func decodeControlPlaneKey(decoder *json.Decoder) (controlplane.PublicJWK, error
 	return controlplane.PublicJWK{
 		KTY: values["kty"], KID: values["kid"], Use: values["use"],
 		Alg: values["alg"], CRV: values["crv"], X: values["x"],
-	}, nil
-}
-
-func decodeFirebaseCertificates(body []byte) ([]controlplane.PublicJWK, error) {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	opening, err := decoder.Token()
-	if err != nil || opening != json.Delim('{') {
-		return nil, errors.New("Firebase certificate document is not an object")
-	}
-	keys := make([]controlplane.PublicJWK, 0)
-	seen := make(map[string]struct{})
-	for decoder.More() {
-		if len(keys) >= maximumPublicKeys {
-			return nil, errors.New("Firebase certificate document has too many keys")
-		}
-		member, memberErr := decoder.Token()
-		kid, ok := member.(string)
-		if memberErr != nil || !ok || !validKeyID(kid) {
-			return nil, errors.New("Firebase certificate key ID is invalid")
-		}
-		if _, duplicate := seen[kid]; duplicate {
-			return nil, errors.New("Firebase certificate document has a duplicate key ID")
-		}
-		seen[kid] = struct{}{}
-		var certificatePEM string
-		if err = decoder.Decode(&certificatePEM); err != nil {
-			return nil, errors.New("Firebase certificate value is not a string")
-		}
-		key, keyErr := firebaseCertificateJWK(kid, certificatePEM)
-		if keyErr != nil {
-			return nil, keyErr
-		}
-		keys = append(keys, key)
-	}
-	closing, err := decoder.Token()
-	if err != nil || closing != json.Delim('}') || len(keys) == 0 {
-		return nil, errors.New("Firebase certificate document is empty or incomplete")
-	}
-	if err = requireJSONEOF(decoder); err != nil {
-		return nil, err
-	}
-	return keys, nil
-}
-
-func firebaseCertificateJWK(kid, value string) (controlplane.PublicJWK, error) {
-	block, rest := pem.Decode([]byte(value))
-	if block == nil || block.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 {
-		return controlplane.PublicJWK{}, errors.New("Firebase certificate PEM is invalid")
-	}
-	certificate, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return controlplane.PublicJWK{}, errors.New("Firebase certificate DER is invalid")
-	}
-	publicKey, ok := certificate.PublicKey.(*rsa.PublicKey)
-	if !ok || publicKey.N.BitLen() < 2_048 || publicKey.N.BitLen() > 4_096 || publicKey.E < 3 || publicKey.E%2 == 0 {
-		return controlplane.PublicJWK{}, errors.New("Firebase certificate RSA key is invalid")
-	}
-	modulus := publicKey.N.Bytes()
-	exponent := make([]byte, 0, 4)
-	for value := publicKey.E; value > 0; value >>= 8 {
-		exponent = append([]byte{byte(value)}, exponent...)
-	}
-	return controlplane.PublicJWK{
-		KTY: "RSA", KID: kid, Use: "sig", Alg: "RS256",
-		N: base64.RawURLEncoding.EncodeToString(modulus),
-		E: base64.RawURLEncoding.EncodeToString(exponent),
 	}, nil
 }
 
