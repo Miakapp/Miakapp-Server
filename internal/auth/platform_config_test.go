@@ -15,6 +15,11 @@ func TestPlatformConfigPinsCanonicalAuthorities(t *testing.T) {
 	if err := validPlatformConfig().Validate(); err != nil {
 		t.Fatal(err)
 	}
+	prefixedRelay := validPlatformConfig()
+	prefixedRelay.RelayAudience = "wss://relay.example.test/miakapp/ws"
+	if err := prefixedRelay.Validate(); err != nil {
+		t.Fatalf("expected a canonical relay path ending in /ws to be accepted: %v", err)
+	}
 	tests := []struct {
 		name   string
 		mutate func(*PlatformConfig)
