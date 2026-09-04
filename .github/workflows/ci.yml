@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Miakapp/MiakAPI
-          ref: 9463294af3353c128dced85309c468abddf87ad4
+          ref: 967632ccc57df32a1a31cdbd761c7c3515106c4b
           path: miakapi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -68,6 +68,55 @@ jobs:
           bun run build
       - name: Run the real SDK-to-relay integration
         run: ./scripts/check-miakapi-integration.sh "$GITHUB_WORKSPACE/miakapi"
+
+  platform-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out relay
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out the pinned control plane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Miakapp/Miakapp-V3
+          ref: 0fc9322157951dd80f1ae39ef12b7c73e99bc69f
+          path: .integration/miakapp-v3
+      - name: Check out the pinned MiakAPI coordinator SDK
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Miakapp/MiakAPI
+          ref: 967632ccc57df32a1a31cdbd761c7c3515106c4b
+          path: .integration/miakapi
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: '22.22.0'
+          package-manager-cache: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.2.23'
+      - name: Build the pinned control plane
+        working-directory: .integration/miakapp-v3/control-plane
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+      - name: Build the pinned MiakAPI coordinator SDK
+        working-directory: .integration/miakapi
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+      - name: Run the Home Key to relay authentication integration
+        run: >-
+          ./scripts/check-platform-integration.sh
+          "$GITHUB_WORKSPACE/.integration/miakapp-v3"
+          "$GITHUB_WORKSPACE/.integration/miakapi"
 
   image:
     runs-on: ubuntu-24.04
