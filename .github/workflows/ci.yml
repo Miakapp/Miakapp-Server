@@ -79,7 +79,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Miakapp/Miakapp-V3
-          ref: 0fc9322157951dd80f1ae39ef12b7c73e99bc69f
+          ref: 259173ca730f0763710b7c99afa163ba26e70bb2
           path: .integration/miakapp-v3
       - name: Check out the pinned MiakAPI coordinator SDK
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

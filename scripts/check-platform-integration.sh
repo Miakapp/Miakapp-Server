@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+umask 077
 
 if [ "$#" -ne 2 ]; then
   echo "Usage: $0 /absolute/path/to/Miakapp-V3 /absolute/path/to/MiakAPI" >&2
@@ -68,14 +69,20 @@ export MIAKAPP_RELAY_FIXTURE_BINARY="$integration_directory/platform-fixture-ser
 export MIAKAPP_INTEGRATION_CERT_FILE="$integration_directory/tls.crt"
 export MIAKAPP_INTEGRATION_KEY_FILE="$integration_directory/tls.key"
 export MIAKAPP_CONTROL_METADATA_FILE="$integration_directory/control.json"
+export MIAKAPP_CONTROL_EVIDENCE_FILE="$integration_directory/control-evidence.json"
+export MIAKAPP_CONTROL_SECRET_FILE="$integration_directory/control-secret"
 export MIAKAPP_RELAY_METADATA_FILE="$integration_directory/relay.json"
 export MIAKAPP_RELAY_EVIDENCE_FILE="$integration_directory/evidence.json"
+export MIAKAPP_RELAY_CONTROL_SECRET_FILE="$integration_directory/relay-secret"
 export MIAKAPP_HOME_KEY_FILE="$integration_directory/home-key"
 export FIREBASE_CLI_DISABLE_UPDATE_CHECK=true
 export GCLOUD_PROJECT=demo-miakapp-v4
 export GOOGLE_CLOUD_PROJECT=demo-miakapp-v4
 export FIRESTORE_EMULATOR_VERSION=1.19.4
 export FIREBASE_EMULATORS_PATH="$v3_repository/control-plane/.firebase/emulators"
+
+openssl rand -hex 32 > "$MIAKAPP_CONTROL_SECRET_FILE"
+openssl rand -hex 32 > "$MIAKAPP_RELAY_CONTROL_SECRET_FILE"
 
 cd "$v3_repository/control-plane"
 bunx firebase setup:emulators:firestore --non-interactive
