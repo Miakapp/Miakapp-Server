@@ -50,8 +50,8 @@ func (config PlatformConfig) Validate() error {
 		return errors.New("MIAKAPP_CONTROL_PLANE_JWKS_URL must use the control-plane issuer origin")
 	}
 	relay, err := canonicalURL(config.RelayAudience, "wss", true)
-	if err != nil || relay.Path != "/ws" {
-		return errors.New("MIAKAPP_RELAY_AUDIENCE must be a canonical WSS URL ending exactly in /ws")
+	if err != nil || !strings.HasSuffix(relay.Path, "/ws") {
+		return errors.New("MIAKAPP_RELAY_AUDIENCE must be a canonical WSS URL ending in /ws")
 	}
 	if !firebaseProjectIDPattern.MatchString(config.FirebaseProjectID) {
 		return errors.New("MIAKAPP_FIREBASE_PROJECT_ID is invalid")
