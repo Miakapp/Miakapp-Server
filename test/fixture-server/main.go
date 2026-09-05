@@ -72,18 +72,16 @@ func main() {
 
 	server := httptest.NewUnstartedServer(nil)
 	origin := "https://" + server.Listener.Addr().String()
-	cfg := config.Config{
-		ListenAddress:   ":0",
-		AllowedOrigins:  map[string]struct{}{origin: {}},
-		Handshake:       2 * time.Second,
-		WriteTimeout:    2 * time.Second,
-		PingInterval:    time.Minute,
-		PongTimeout:     2 * time.Second,
-		DeclarationTTL:  2 * time.Second,
-		DisconnectGrace: 100 * time.Millisecond,
-		ShutdownTimeout: 2 * time.Second,
-		MaxQueuedBytes:  1_048_576,
-	}
+	cfg := config.Default()
+	cfg.ListenAddress = ":0"
+	cfg.AllowedOrigins = map[string]struct{}{origin: {}}
+	cfg.Handshake = 2 * time.Second
+	cfg.WriteTimeout = 2 * time.Second
+	cfg.PingInterval = time.Minute
+	cfg.PongTimeout = 2 * time.Second
+	cfg.DeclarationTTL = 2 * time.Second
+	cfg.DisconnectGrace = 100 * time.Millisecond
+	cfg.ShutdownTimeout = 2 * time.Second
 	engine, err := relay.New(cfg, verifier{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		panic(err)

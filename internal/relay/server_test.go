@@ -88,18 +88,15 @@ func newTestServerWithVerifier(
 	mutate func(*config.Config),
 ) (*Server, *httptest.Server) {
 	t.Helper()
-	cfg := config.Config{
-		ListenAddress:   ":0",
-		AllowedOrigins:  map[string]struct{}{},
-		Handshake:       time.Second,
-		WriteTimeout:    time.Second,
-		PingInterval:    time.Minute,
-		PongTimeout:     time.Second,
-		DeclarationTTL:  time.Second,
-		DisconnectGrace: 50 * time.Millisecond,
-		ShutdownTimeout: time.Second,
-		MaxQueuedBytes:  1_048_576,
-	}
+	cfg := config.Default()
+	cfg.ListenAddress = ":0"
+	cfg.Handshake = time.Second
+	cfg.WriteTimeout = time.Second
+	cfg.PingInterval = time.Minute
+	cfg.PongTimeout = time.Second
+	cfg.DeclarationTTL = time.Second
+	cfg.DisconnectGrace = 50 * time.Millisecond
+	cfg.ShutdownTimeout = time.Second
 	if mutate != nil {
 		mutate(&cfg)
 	}

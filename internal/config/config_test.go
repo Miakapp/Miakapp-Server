@@ -64,24 +64,80 @@ func TestLoadRejectsQueueThatCannotHoldOneMaximumFrame(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsUnsafeEmbeddedConfiguration(t *testing.T) {
-	configuration := Config{
-		ListenAddress:   ":3000",
-		AllowedOrigins:  map[string]struct{}{},
-		Handshake:       time.Second,
-		WriteTimeout:    time.Second,
-		PingInterval:    time.Second,
-		PongTimeout:     time.Second,
-		DeclarationTTL:  time.Second,
-		DisconnectGrace: time.Second,
-		ShutdownTimeout: time.Second,
-		MaxQueuedBytes:  protocol.MaxFrameBytes,
+func TestLoadReadsTheBoundedProcessAdmissionProfile(t *testing.T) {
+	t.Setenv("MIAKAPP_ALLOWED_ORIGINS", "")
+	t.Setenv("MIAKAPP_MAX_QUEUED_BYTES", "262144")
+	t.Setenv("MIAKAPP_MAX_CONNECTIONS", "8")
+	t.Setenv("MIAKAPP_MAX_CONNECTIONS_PER_IP", "8")
+	t.Setenv("MIAKAPP_CONNECTION_ATTEMPTS_PER_MINUTE", "32")
+	t.Setenv("MIAKAPP_MAX_TRACKED_IPS", "64")
+	t.Setenv("MIAKAPP_MAX_HOMES", "16")
+	t.Setenv("MIAKAPP_MAX_AGGREGATE_QUEUED_BYTES", "4194304")
+	configuration, err := Load()
+	if err != nil {
+		t.Fatal(err)
 	}
+	if configuration.MaxQueuedBytes != 262_144 ||
+		configuration.MaxConnections != 8 ||
+		configuration.MaxConnectionsPerIP != 8 ||
+		configuration.ConnectionAttemptsPerMinute != 32 ||
+		configuration.MaxTrackedIPs != 64 ||
+		configuration.MaxHomes != 16 ||
+		configuration.MaxAggregateQueuedBytes != 4_194_304 {
+		t.Fatalf("unexpected process admission profile: %#v", configuration)
+	}
+}
+
+func TestValidateRejectsUnsafeEmbeddedConfiguration(t *testing.T) {
+	configuration := Default()
+	configuration.Handshake = time.Second
+	configuration.WriteTimeout = time.Second
+	configuration.PingInterval = time.Second
+	configuration.PongTimeout = time.Second
+	configuration.DeclarationTTL = time.Second
+	configuration.DisconnectGrace = time.Second
+	configuration.ShutdownTimeout = time.Second
+	configuration.MaxQueuedBytes = protocol.MaxFrameBytes
 	if err := configuration.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	configuration.PingInterval = 0
 	if err := configuration.Validate(); err == nil {
 		t.Fatal("expected zero ping interval to be rejected")
+	}
+}
+
+func TestValidateRejectsIncoherentProcessAdmissionLimits(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{
+			name: "per-IP connections exceed total",
+			mutate: func(configuration *Config) {
+				configuration.MaxConnectionsPerIP = configuration.MaxConnections + 1
+			},
+		},
+		{
+			name: "attempt rate below active connections",
+			mutate: func(configuration *Config) {
+				configuration.ConnectionAttemptsPerMinute = configuration.MaxConnectionsPerIP - 1
+			},
+		},
+		{
+			name: "aggregate queue below one connection",
+			mutate: func(configuration *Config) {
+				configuration.MaxAggregateQueuedBytes = configuration.MaxQueuedBytes - 1
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configuration := Default()
+			test.mutate(&configuration)
+			if err := configuration.Validate(); err == nil {
+				t.Fatal("expected invalid admission configuration to be rejected")
+			}
+		})
 	}
 }
