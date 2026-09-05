@@ -10,8 +10,8 @@ access tokens against the configured control-plane JWKS. Firebase Auth and App
 Check credentials remain on the browser-to-control-plane HTTPS boundary and are
 never relay credentials. The relay holds no verification secret and never calls
 the platform with authenticated authority. It remains an implementation preview
-until deployment admission limits and the staging relay integration gate have
-passed; do not deploy it as a production replacement yet.
+until the staging relay integration gate has passed; do not deploy it as a
+production replacement yet.
 
 ## Contract
 
@@ -40,7 +40,9 @@ The implemented vertical slice includes:
 - call routing with connection-local ID rewriting, acceptance, stream credit,
   cancellation, deadlines, terminal results, and conservative
   `OUTCOME_UNKNOWN` handling;
-- byte-bounded outbound queues and stable protocol errors.
+- byte-bounded outbound queues and stable protocol errors; and
+- finite process admission for active connections, attempts and tracked source
+  addresses, total Homes, and aggregate queued payload bytes.
 
 The legacy Node protocol, Firestore listeners, FCM sender, and custom `miakode`
 encoding are intentionally absent. Miakapp 3.5 has no permanent v3 compatibility
@@ -150,6 +152,12 @@ The executable reads:
 | `MIAKAPP_DISCONNECT_GRACE` | `30s` | Retained coordinator generation lifetime |
 | `MIAKAPP_SHUTDOWN_TIMEOUT` | `10s` | HTTP shutdown deadline |
 | `MIAKAPP_MAX_QUEUED_BYTES` | `1048576` | Per-connection outbound byte ceiling |
+| `MIAKAPP_MAX_CONNECTIONS` | `256` | Process-wide active WebSocket ceiling |
+| `MIAKAPP_MAX_CONNECTIONS_PER_IP` | `32` | Active WebSocket ceiling for one immediate TCP peer |
+| `MIAKAPP_CONNECTION_ATTEMPTS_PER_MINUTE` | `120` | Fixed-window attempt ceiling for one immediate TCP peer |
+| `MIAKAPP_MAX_TRACKED_IPS` | `4096` | Process-wide ceiling for in-memory source admission buckets |
+| `MIAKAPP_MAX_HOMES` | `1024` | Process-wide live and grace-retained Home ceiling |
+| `MIAKAPP_MAX_AGGREGATE_QUEUED_BYTES` | `67108864` | Shared outbound queue byte ceiling across all connections |
 
 An absent HTTP `Origin` is accepted for non-browser clients. A supplied browser
 origin must match one configured value exactly; wildcards, substring matching,
@@ -188,11 +196,16 @@ Firebase source tokens. Roll out compatible control-plane, browser SDK, and rela
 revisions together, retain the previous complete set for rollback, and do not
 route browser traffic to a partially upgraded relay.
 
-This preview is not yet the deployment admission-control boundary. Per-IP
-connection limits, total-home admission, and aggregate cross-connection memory
-budgets must land with that control-plane/deployment contract. The relay already
-bounds complete frames, each connection queue, subscriptions, calls, declared
-home dictionaries, presence, and coordinator counts.
+Process admission is applied before WebSocket upgrade. It keys active and
+fixed-minute attempt limits only by `RemoteAddr`, the immediate TCP peer, and
+never trusts `X-Forwarded-For` or another caller-controlled header. A shared
+reverse proxy can therefore make this deliberately coarser than an end-user IP;
+deployments that require client-level fairness must enforce it at a trusted edge.
+The independent process-wide connection ceiling still bounds work in either
+case. Source buckets, live and grace-retained Homes, per-connection queues and
+aggregate queued bytes all have finite configurable ceilings. Complete frames,
+subscriptions, calls, declared home dictionaries, presence and coordinator
+counts retain their protocol bounds.
 
 ## Trust and persistence
 

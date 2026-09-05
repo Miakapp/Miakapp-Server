@@ -19,6 +19,19 @@ type shortLeaseVerifier struct {
 	lifetime time.Duration
 }
 
+func newBareTestServer(maxQueuedBytes int) *Server {
+	configuration := config.Default()
+	configuration.MaxQueuedBytes = maxQueuedBytes
+	server := &Server{
+		config:   configuration,
+		verifier: fixtureVerifier{},
+		context:  context.Background(),
+		logger:   slog.Default(),
+	}
+	server.admission = newAdmissionController(configuration)
+	return server
+}
+
 func (verifier shortLeaseVerifier) Verify(_ context.Context, request auth.Request) (auth.Identity, error) {
 	if request.Token != "short-user-token" {
 		return auth.Identity{}, auth.Failure(auth.ErrRejected, nil)
@@ -62,15 +75,8 @@ func TestAuthenticationLeaseExpiryIsActivelyEnforced(t *testing.T) {
 }
 
 func TestReauthenticationKeepsTheRoutedPrincipalImmutable(t *testing.T) {
-	server := &Server{
-		config: config.Config{
-			Handshake:      time.Second,
-			MaxQueuedBytes: 1_048_576,
-		},
-		verifier: fixtureVerifier{},
-		context:  context.Background(),
-		logger:   slog.Default(),
-	}
+	server := newBareTestServer(1_048_576)
+	server.config.Handshake = time.Second
 	peer := newConnection(server, nil, 1, "fixture")
 	peer.identity = auth.Identity{
 		Role:          auth.RoleUser,
@@ -269,11 +275,7 @@ func TestServerCloseDoesNotWaitForPeerCloseHandshakes(t *testing.T) {
 
 func TestConcurrentBootstrapNeverPrecedesWelcomeOrLosesPresence(t *testing.T) {
 	for iteration := 0; iteration < 64; iteration++ {
-		server := &Server{
-			config:  config.Config{MaxQueuedBytes: 1_048_576},
-			context: context.Background(),
-			logger:  slog.Default(),
-		}
+		server := newBareTestServer(1_048_576)
 		current, err := newHome(server, fmt.Sprintf("bootstrap-%d", iteration))
 		if err != nil {
 			t.Fatal(err)
@@ -380,7 +382,7 @@ func queuedFrames(t *testing.T, peer *connection) []protocol.Frame {
 
 func TestProtectedQueueEntryEvictsOnlyDroppableStreamData(t *testing.T) {
 	connection := &connection{
-		server:    &Server{config: config.Config{MaxQueuedBytes: 100}},
+		server:    newBareTestServer(100),
 		queueWake: make(chan struct{}, 1),
 	}
 	if err := connection.enqueueBytes(outboundMessage{
@@ -399,6 +401,9 @@ func TestProtectedQueueEntryEvictsOnlyDroppableStreamData(t *testing.T) {
 	if connection.queuedBytes != 70 || len(connection.queue) != 2 {
 		t.Fatalf("unexpected compacted queue: bytes=%d entries=%d", connection.queuedBytes, len(connection.queue))
 	}
+	if connection.server.admission.queuedBytes != 70 {
+		t.Fatalf("stream eviction left aggregate accounting at %d", connection.server.admission.queuedBytes)
+	}
 	if len(connection.queue[0].bytes) != 30 || len(connection.queue[1].bytes) != 40 {
 		t.Fatalf("protected enqueue reordered non-stream traffic: %#v", connection.queue)
 	}
@@ -406,7 +411,7 @@ func TestProtectedQueueEntryEvictsOnlyDroppableStreamData(t *testing.T) {
 
 func TestFatalMakesAConnectionUnavailableAndRejectsPostCloseFrames(t *testing.T) {
 	peer := &connection{
-		server:    &Server{config: config.Config{MaxQueuedBytes: 1_024}},
+		server:    newBareTestServer(1_024),
 		logger:    slog.Default(),
 		queueWake: make(chan struct{}, 1),
 	}
@@ -426,11 +431,14 @@ func TestFatalMakesAConnectionUnavailableAndRejectsPostCloseFrames(t *testing.T)
 	if len(frames) != 1 || frames[0].Opcode != protocol.OpcodeFatal {
 		t.Fatalf("unexpected terminal queue: %#v", frames)
 	}
+	if peer.server.admission.queuedBytes != peer.queuedBytes {
+		t.Fatalf("terminal queue accounting diverged: local=%d aggregate=%d", peer.queuedBytes, peer.server.admission.queuedBytes)
+	}
 }
 
 func TestRequestIdentifierRemainsInflightUntilTerminalWrite(t *testing.T) {
 	connection := &connection{
-		server:     &Server{config: config.Config{MaxQueuedBytes: 1_024}},
+		server:     newBareTestServer(1_024),
 		queueWake:  make(chan struct{}, 1),
 		requestIDs: make(map[int64]struct{}),
 	}
@@ -451,6 +459,9 @@ func TestRequestIdentifierRemainsInflightUntilTerminalWrite(t *testing.T) {
 		t.Fatal("terminal response did not carry a write completion")
 	}
 	message.afterWrite()
+	if connection.server.admission.queuedBytes != 0 {
+		t.Fatalf("terminal write left %d aggregate queued bytes", connection.server.admission.queuedBytes)
+	}
 	if failure := connection.beginRequest(91); failure != nil {
 		t.Fatalf("request ID was not reusable after terminal write: %v", failure)
 	}

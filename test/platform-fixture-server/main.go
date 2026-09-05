@@ -495,18 +495,16 @@ func main() {
 	}
 	verifier := &recordingVerifier{delegate: relayPlatformVerifier, state: state}
 
-	cfg := config.Config{
-		ListenAddress:   listener.Addr().String(),
-		AllowedOrigins:  map[string]struct{}{control.ControlURL: {}},
-		Handshake:       5 * time.Second,
-		WriteTimeout:    5 * time.Second,
-		PingInterval:    time.Minute,
-		PongTimeout:     5 * time.Second,
-		DeclarationTTL:  5 * time.Second,
-		DisconnectGrace: 100 * time.Millisecond,
-		ShutdownTimeout: 5 * time.Second,
-		MaxQueuedBytes:  1_048_576,
-	}
+	cfg := config.Default()
+	cfg.ListenAddress = listener.Addr().String()
+	cfg.AllowedOrigins = map[string]struct{}{control.ControlURL: {}}
+	cfg.Handshake = 5 * time.Second
+	cfg.WriteTimeout = 5 * time.Second
+	cfg.PingInterval = time.Minute
+	cfg.PongTimeout = 5 * time.Second
+	cfg.DeclarationTTL = 5 * time.Second
+	cfg.DisconnectGrace = 100 * time.Millisecond
+	cfg.ShutdownTimeout = 5 * time.Second
 	engine, err := relay.New(cfg, verifier, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		panic(err)

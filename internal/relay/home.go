@@ -17,6 +17,8 @@ const (
 	maxDictionaryEntries   = 16_384
 )
 
+var errHomeCapacity = errors.New("relay home capacity is exhausted")
+
 type homeRegistry struct {
 	server *Server
 	mu     sync.Mutex
@@ -36,6 +38,9 @@ func (registry *homeRegistry) acquire(homeID string) (*home, error) {
 	}
 	current := registry.homes[homeID]
 	if current == nil {
+		if len(registry.homes) >= registry.server.config.MaxHomes {
+			return nil, errHomeCapacity
+		}
 		var err error
 		current, err = newHome(registry.server, homeID)
 		if err != nil {

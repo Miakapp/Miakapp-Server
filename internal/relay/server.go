@@ -27,6 +27,7 @@ type Server struct {
 	verifier    auth.Verifier
 	logger      *slog.Logger
 	homes       *homeRegistry
+	admission   *admissionController
 	context     context.Context
 	cancel      context.CancelFunc
 	lifecycleMu sync.Mutex
@@ -55,6 +56,7 @@ func New(cfg config.Config, verifier auth.Verifier, logger *slog.Logger) (*Serve
 		context:  ctx,
 		cancel:   cancel,
 	}
+	server.admission = newAdmissionController(cfg)
 	server.homes = newHomeRegistry(server)
 	server.nextSession.Store(randomSessionSeed())
 	return server, nil
@@ -94,7 +96,25 @@ func (server *Server) ServeHTTP(response http.ResponseWriter, request *http.Requ
 }
 
 func (server *Server) serveWebSocket(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("X-Content-Type-Options", "nosniff")
+	admission, err := server.admission.acquireConnection(request.RemoteAddr)
+	if err != nil {
+		switch {
+		case errors.Is(err, errInvalidSourceAddress):
+			http.Error(response, "invalid connection source", http.StatusBadRequest)
+		case errors.Is(err, errConnectionRate):
+			response.Header().Set("Retry-After", "60")
+			http.Error(response, "connection rate exceeded", http.StatusTooManyRequests)
+		default:
+			response.Header().Set("Retry-After", "1")
+			http.Error(response, "relay capacity unavailable", http.StatusServiceUnavailable)
+		}
+		return
+	}
+	defer admission.release()
 	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", "GET")
 		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}

@@ -13,45 +13,76 @@ import (
 )
 
 const (
-	defaultListenAddress   = ":3000"
-	defaultHandshake       = 5 * time.Second
-	defaultWriteTimeout    = 5 * time.Second
-	defaultPingInterval    = 30 * time.Second
-	defaultPongTimeout     = 10 * time.Second
-	defaultDeclarationTTL  = 30 * time.Second
-	defaultDisconnectGrace = 30 * time.Second
-	defaultShutdownTimeout = 10 * time.Second
-	defaultMaxQueuedBytes  = 1_048_576
+	defaultListenAddress               = ":3000"
+	defaultHandshake                   = 5 * time.Second
+	defaultWriteTimeout                = 5 * time.Second
+	defaultPingInterval                = 30 * time.Second
+	defaultPongTimeout                 = 10 * time.Second
+	defaultDeclarationTTL              = 30 * time.Second
+	defaultDisconnectGrace             = 30 * time.Second
+	defaultShutdownTimeout             = 10 * time.Second
+	defaultMaxQueuedBytes              = 1_048_576
+	defaultMaxConnections              = 256
+	defaultMaxConnectionsPerIP         = 32
+	defaultConnectionAttemptsPerMinute = 120
+	defaultMaxTrackedIPs               = 4_096
+	defaultMaxHomes                    = 1_024
+	defaultMaxAggregateQueuedBytes     = 64 * 1_048_576
+	maximumConnections                 = 4_096
+	maximumConnectionAttemptsPerMinute = 65_536
+	maximumTrackedIPs                  = 65_536
+	maximumHomes                       = 4_096
+	maximumAggregateQueuedBytes        = 512 * 1_048_576
 )
 
 // Config contains process-level relay configuration. Authentication material is
 // deliberately absent: the platform control-plane adapter owns that boundary.
 type Config struct {
-	ListenAddress   string
-	AllowedOrigins  map[string]struct{}
-	Handshake       time.Duration
-	WriteTimeout    time.Duration
-	PingInterval    time.Duration
-	PongTimeout     time.Duration
-	DeclarationTTL  time.Duration
-	DisconnectGrace time.Duration
-	ShutdownTimeout time.Duration
-	MaxQueuedBytes  int
+	ListenAddress               string
+	AllowedOrigins              map[string]struct{}
+	Handshake                   time.Duration
+	WriteTimeout                time.Duration
+	PingInterval                time.Duration
+	PongTimeout                 time.Duration
+	DeclarationTTL              time.Duration
+	DisconnectGrace             time.Duration
+	ShutdownTimeout             time.Duration
+	MaxQueuedBytes              int
+	MaxConnections              int
+	MaxConnectionsPerIP         int
+	ConnectionAttemptsPerMinute int
+	MaxTrackedIPs               int
+	MaxHomes                    int
+	MaxAggregateQueuedBytes     int
+}
+
+// Default returns the finite standalone relay profile without reading the
+// process environment. Embedded relays may lower these limits before Validate.
+func Default() Config {
+	return Config{
+		ListenAddress:               defaultListenAddress,
+		AllowedOrigins:              make(map[string]struct{}),
+		Handshake:                   defaultHandshake,
+		WriteTimeout:                defaultWriteTimeout,
+		PingInterval:                defaultPingInterval,
+		PongTimeout:                 defaultPongTimeout,
+		DeclarationTTL:              defaultDeclarationTTL,
+		DisconnectGrace:             defaultDisconnectGrace,
+		ShutdownTimeout:             defaultShutdownTimeout,
+		MaxQueuedBytes:              defaultMaxQueuedBytes,
+		MaxConnections:              defaultMaxConnections,
+		MaxConnectionsPerIP:         defaultMaxConnectionsPerIP,
+		ConnectionAttemptsPerMinute: defaultConnectionAttemptsPerMinute,
+		MaxTrackedIPs:               defaultMaxTrackedIPs,
+		MaxHomes:                    defaultMaxHomes,
+		MaxAggregateQueuedBytes:     defaultMaxAggregateQueuedBytes,
+	}
 }
 
 // Load reads and validates configuration from the environment.
 func Load() (Config, error) {
-	config := Config{
-		ListenAddress:   environment("MIAKAPP_LISTEN_ADDRESS", defaultListenAddress),
-		Handshake:       defaultHandshake,
-		WriteTimeout:    defaultWriteTimeout,
-		PingInterval:    defaultPingInterval,
-		PongTimeout:     defaultPongTimeout,
-		DeclarationTTL:  defaultDeclarationTTL,
-		DisconnectGrace: defaultDisconnectGrace,
-		ShutdownTimeout: defaultShutdownTimeout,
-		MaxQueuedBytes:  defaultMaxQueuedBytes,
-	}
+	config := Default()
+	config.ListenAddress = environment("MIAKAPP_LISTEN_ADDRESS", config.ListenAddress)
 
 	var err error
 	config.AllowedOrigins, err = parseOrigins(os.Getenv("MIAKAPP_ALLOWED_ORIGINS"))
@@ -84,6 +115,54 @@ func Load() (Config, error) {
 		config.MaxQueuedBytes,
 		protocol.MaxFrameBytes,
 		defaultMaxQueuedBytes,
+	); err != nil {
+		return Config{}, err
+	}
+	if config.MaxConnections, err = integer(
+		"MIAKAPP_MAX_CONNECTIONS",
+		config.MaxConnections,
+		1,
+		maximumConnections,
+	); err != nil {
+		return Config{}, err
+	}
+	if config.MaxConnectionsPerIP, err = integer(
+		"MIAKAPP_MAX_CONNECTIONS_PER_IP",
+		config.MaxConnectionsPerIP,
+		1,
+		maximumConnections,
+	); err != nil {
+		return Config{}, err
+	}
+	if config.ConnectionAttemptsPerMinute, err = integer(
+		"MIAKAPP_CONNECTION_ATTEMPTS_PER_MINUTE",
+		config.ConnectionAttemptsPerMinute,
+		1,
+		maximumConnectionAttemptsPerMinute,
+	); err != nil {
+		return Config{}, err
+	}
+	if config.MaxTrackedIPs, err = integer(
+		"MIAKAPP_MAX_TRACKED_IPS",
+		config.MaxTrackedIPs,
+		1,
+		maximumTrackedIPs,
+	); err != nil {
+		return Config{}, err
+	}
+	if config.MaxHomes, err = integer(
+		"MIAKAPP_MAX_HOMES",
+		config.MaxHomes,
+		1,
+		maximumHomes,
+	); err != nil {
+		return Config{}, err
+	}
+	if config.MaxAggregateQueuedBytes, err = integer(
+		"MIAKAPP_MAX_AGGREGATE_QUEUED_BYTES",
+		config.MaxAggregateQueuedBytes,
+		protocol.MaxFrameBytes,
+		maximumAggregateQueuedBytes,
 	); err != nil {
 		return Config{}, err
 	}
@@ -122,6 +201,32 @@ func (config Config) Validate() error {
 			"outbound queue limit must be between %d and %d bytes",
 			protocol.MaxFrameBytes,
 			defaultMaxQueuedBytes,
+		)
+	}
+	if config.MaxConnections < 1 || config.MaxConnections > maximumConnections {
+		return fmt.Errorf("connection limit must be between 1 and %d", maximumConnections)
+	}
+	if config.MaxConnectionsPerIP < 1 || config.MaxConnectionsPerIP > config.MaxConnections {
+		return errors.New("per-IP connection limit must be positive and no greater than the total connection limit")
+	}
+	if config.ConnectionAttemptsPerMinute < config.MaxConnectionsPerIP ||
+		config.ConnectionAttemptsPerMinute > maximumConnectionAttemptsPerMinute {
+		return fmt.Errorf(
+			"per-IP connection attempt limit must be between the active per-IP limit and %d",
+			maximumConnectionAttemptsPerMinute,
+		)
+	}
+	if config.MaxTrackedIPs < 1 || config.MaxTrackedIPs > maximumTrackedIPs {
+		return fmt.Errorf("tracked IP limit must be between 1 and %d", maximumTrackedIPs)
+	}
+	if config.MaxHomes < 1 || config.MaxHomes > maximumHomes {
+		return fmt.Errorf("home limit must be between 1 and %d", maximumHomes)
+	}
+	if config.MaxAggregateQueuedBytes < config.MaxQueuedBytes ||
+		config.MaxAggregateQueuedBytes > maximumAggregateQueuedBytes {
+		return fmt.Errorf(
+			"aggregate outbound queue limit must be between the per-connection limit and %d bytes",
+			maximumAggregateQueuedBytes,
 		)
 	}
 	for origin := range config.AllowedOrigins {

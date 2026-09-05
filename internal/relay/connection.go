@@ -235,6 +235,9 @@ func (connection *connection) authenticate(frame protocol.Frame) *relayError {
 	connection.identity = identity
 	connection.home, err = connection.server.homes.acquire(identity.HomeID)
 	if err != nil {
+		if errors.Is(err, errHomeCapacity) {
+			return fatalError(codeLimitExceeded, true, "relay home capacity exceeded", closeLimit)
+		}
 		return fatalError(codeUnavailable, true, "relay is shutting down", closeUnavailable)
 	}
 	connection.phase.Store(uint32(phaseActive))
@@ -467,6 +470,9 @@ func (connection *connection) enqueueBytes(message outboundMessage, priority boo
 	if connection.queuedBytes+len(message.bytes) > connection.server.config.MaxQueuedBytes {
 		return errors.New("outbound queue limit exceeded")
 	}
+	if !connection.server.admission.reserveQueuedBytes(len(message.bytes)) {
+		return errors.New("aggregate outbound queue limit exceeded")
+	}
 	connection.queuedBytes += len(message.bytes)
 	if message.closeStatus != 0 {
 		connection.closeQueued = true
@@ -484,9 +490,11 @@ func (connection *connection) evictStreamsLocked(requiredBytes int) {
 		return
 	}
 	retained := connection.queue[:0]
+	releasedBytes := 0
 	for _, message := range connection.queue {
 		if message.droppableStream && connection.queuedBytes+requiredBytes > connection.server.config.MaxQueuedBytes {
 			connection.queuedBytes -= len(message.bytes)
+			releasedBytes += len(message.bytes)
 			continue
 		}
 		retained = append(retained, message)
@@ -495,6 +503,7 @@ func (connection *connection) evictStreamsLocked(requiredBytes int) {
 		connection.queue[index] = outboundMessage{}
 	}
 	connection.queue = retained
+	connection.server.admission.releaseQueuedBytes(releasedBytes)
 }
 
 func (connection *connection) writeLoop() {
@@ -564,6 +573,7 @@ func (connection *connection) nextMessage() (outboundMessage, bool) {
 			connection.queue[0] = outboundMessage{}
 			connection.queue = connection.queue[1:]
 			connection.queuedBytes -= len(message.bytes)
+			connection.server.admission.releaseQueuedBytes(len(message.bytes))
 			connection.queueMu.Unlock()
 			return message, true
 		}
@@ -619,16 +629,30 @@ func (connection *connection) fail(sourceOpcode byte, failure *relayError) {
 		if connection.enqueueBytes(message, true) == nil {
 			return
 		}
+		queued := false
 		connection.queueMu.Lock()
 		if !connection.queueClosed {
+			releasedBytes := connection.queuedBytes
 			for index := range connection.queue {
 				connection.queue[index] = outboundMessage{}
 			}
-			connection.queue = []outboundMessage{message}
-			connection.queuedBytes = len(message.bytes)
-			connection.closeQueued = true
+			connection.queue = nil
+			connection.queuedBytes = 0
+			connection.server.admission.releaseQueuedBytes(releasedBytes)
+			if connection.server.admission.reserveQueuedBytes(len(message.bytes)) {
+				connection.queue = []outboundMessage{message}
+				connection.queuedBytes = len(message.bytes)
+				connection.closeQueued = true
+				queued = true
+			} else {
+				connection.queueClosed = true
+			}
 		}
 		connection.queueMu.Unlock()
+		if !queued {
+			connection.stop(closeInternal, "aggregate_queue_exhausted")
+			return
+		}
 		select {
 		case connection.queueWake <- struct{}{}:
 		default:
@@ -642,7 +666,14 @@ func (connection *connection) stop(status int, reason string) {
 		connection.stopLease()
 		connection.cancel()
 		connection.queueMu.Lock()
+		releasedBytes := connection.queuedBytes
+		for index := range connection.queue {
+			connection.queue[index] = outboundMessage{}
+		}
+		connection.queue = nil
+		connection.queuedBytes = 0
 		connection.queueClosed = true
+		connection.server.admission.releaseQueuedBytes(releasedBytes)
 		connection.queueMu.Unlock()
 		select {
 		case connection.queueWake <- struct{}{}:
