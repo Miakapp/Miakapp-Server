@@ -580,6 +580,7 @@ let observedUserExchangePosts = 0;
 let browserConsoleErrors = 0;
 let userExchangeRequestFailures = 0;
 const userExchangeResponses = [];
+const userExchangeResponseRequests = new WeakSet();
 let browserBoundary;
 let patchedBrowserState;
 let handoffBrowserState;
@@ -633,10 +634,15 @@ try {
   });
   page.on('requestfailed', (request) => {
     if (request.url() !== userExchangeURL.href) return;
+    // Chromium can emit requestfailed after response when a consumed fetch is
+    // aborted during relay handoff. Count only exchanges that received no HTTP
+    // response; exact POST/200 response sequences are asserted below.
+    if (userExchangeResponseRequests.has(request)) return;
     userExchangeRequestFailures += 1;
   });
   page.on('response', (response) => {
     if (response.url() === userExchangeURL.href) {
+      userExchangeResponseRequests.add(response.request());
       userExchangeResponses.push({
         method: response.request().method(),
         status: response.status(),
@@ -717,6 +723,10 @@ try {
   assert.equal(browserPageErrors, 0);
   assert.equal(browserConsoleErrors, 0);
   assert.equal(userExchangeRequestFailures, 0);
+  assert.deepEqual(userExchangeResponses, [
+    { method: 'POST', status: 200 },
+    { method: 'POST', status: 200 },
+  ]);
 
   await controlAction('route_relay', { relay_url: secondaryRelayURL.href });
   secondaryCoordinator = createCoordinatorWithRuntime({
@@ -806,6 +816,11 @@ try {
   assert.equal(browserPageErrors, 0);
   assert.equal(browserConsoleErrors, 0);
   assert.equal(userExchangeRequestFailures, 0);
+  assert.deepEqual(userExchangeResponses, [
+    { method: 'POST', status: 200 },
+    { method: 'POST', status: 200 },
+    { method: 'POST', status: 200 },
+  ]);
 
   await page.evaluate(() => globalThis.miakappIntegration.stop());
   browserClientStopped = true;
