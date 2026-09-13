@@ -43,6 +43,10 @@ const fixtureLease = 10 * time.Minute
 
 const expiringLease = 900 * time.Millisecond
 
+// The GOAWAY reason a restarting relay announces. RFC 0001 leaves the reason
+// space to the deployment; the corpus asserts only that the relay sends one.
+const codeRelayRestarting = 1012
+
 type fixtureIdentity struct {
 	role        auth.Role
 	home        string
@@ -50,6 +54,9 @@ type fixtureIdentity struct {
 	coordinator string
 	email       string
 	lease       time.Duration
+	// Overrides the Home Key client binding a coordinator or CLI identity
+	// carries. Only the fixtures that exercise binding immutability set it.
+	clientID string
 }
 
 // The closed fixture credential set. A conforming subject accepts exactly
@@ -64,13 +71,27 @@ var fixtures = map[string]fixtureIdentity{
 
 	"conformance.coordinator.primary":   {role: auth.RoleCoordinator, home: conformanceHome, id: conformanceHome, coordinator: "primary", lease: fixtureLease},
 	"conformance.coordinator.secondary": {role: auth.RoleCoordinator, home: conformanceHome, id: conformanceHome, coordinator: "secondary", lease: fixtureLease},
+	// Same coordinator, a different Home Key client. Reauthentication may renew
+	// authentication material but never move a session to another client.
+	"conformance.coordinator.primary.other-client": {role: auth.RoleCoordinator, home: conformanceHome, id: conformanceHome, coordinator: "primary", lease: fixtureLease, clientID: "conformance-client-other"},
 
 	"conformance.cli": {role: auth.RoleCLI, home: conformanceHome, id: conformanceHome, lease: fixtureLease},
 }
 
-type fixtureVerifier struct{}
+// drainTriggerDelay keeps the CLI handshake and the drain announcement in a
+// fixed order without making the corpus guess at process timing.
+const drainTriggerDelay = 150 * time.Millisecond
 
-func (fixtureVerifier) Verify(_ context.Context, request auth.Request) (auth.Identity, error) {
+// drainWindow is short enough for a scenario to observe the deadline close and
+// long enough for an in-flight call to produce its terminal reply first.
+const drainWindow = 500 * time.Millisecond
+
+type fixtureVerifier struct {
+	// Called once a CLI credential is verified, when the profile drains.
+	drain func()
+}
+
+func (verifier fixtureVerifier) Verify(_ context.Context, request auth.Request) (auth.Identity, error) {
 	fixture, ok := fixtures[request.Token]
 	if !ok {
 		return auth.Identity{}, auth.Failure(auth.ErrRejected, nil)
@@ -90,8 +111,22 @@ func (fixtureVerifier) Verify(_ context.Context, request auth.Request) (auth.Ide
 	// identity carrying one is rejected, and a coordinator identity carrying a
 	// verified email is too, so the fixture set mirrors that split exactly.
 	clientID := "conformance-client"
+	if fixture.clientID != "" {
+		clientID = fixture.clientID
+	}
 	if fixture.role == auth.RoleUser {
 		clientID = ""
+	}
+	// The drain profiles need an ordered trigger the corpus can express on the
+	// wire. A CLI handshake is that trigger: no other scenario uses the CLI
+	// credential, and verification is the one point the subject observes before
+	// the session exists. The delay lets the CLI's own WELCOME reach the runner
+	// first, so a scenario sees the handshake complete and then the drain.
+	if verifier.drain != nil && fixture.role == auth.RoleCLI {
+		go func() {
+			time.Sleep(drainTriggerDelay)
+			verifier.drain()
+		}()
 	}
 	return auth.Identity{
 		Role:            fixture.role,
@@ -107,6 +142,9 @@ func (fixtureVerifier) Verify(_ context.Context, request auth.Request) (auth.Ide
 
 // Configuration profiles a scenario may name. A scenario declares the profile
 // it assumes so the corpus never depends on one implementation's config type.
+// drainProfiles name the profiles whose subject drains when a CLI connects.
+var drainProfiles = map[string]struct{}{"drain-on-cli": {}}
+
 func profile(name string) (config.Config, error) {
 	cfg := config.Default()
 	cfg.ListenAddress = "127.0.0.1:0"
@@ -124,6 +162,10 @@ func profile(name string) (config.Config, error) {
 	case "fast-grace":
 		// Scenarios that must observe grace expiry within a test run.
 		cfg.DisconnectGrace = 250 * time.Millisecond
+	case "drain-on-cli":
+		// Scenarios that must observe GOAWAY and the draining rules. The subject
+		// starts its drain window when a CLI credential authenticates.
+		cfg.DisconnectGrace = 30 * time.Second
 	default:
 		return config.Config{}, fmt.Errorf("unknown conformance profile %q", name)
 	}
@@ -140,10 +182,18 @@ func main() {
 		cfg.ListenAddress = address
 	}
 
-	engine, err := relay.New(cfg, fixtureVerifier{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// The verifier needs the engine to trigger a drain and the engine needs the
+	// verifier to authenticate, so the trigger is installed after both exist.
+	verifier := &fixtureVerifier{}
+	engine, err := relay.New(cfg, verifier, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
+	}
+	if _, drains := drainProfiles[os.Getenv("MIAKAPP_CONFORMANCE_PROFILE")]; drains {
+		verifier.drain = func() {
+			engine.Drain(int64(drainWindow/time.Millisecond), int64(codeRelayRestarting), drainWindow)
+		}
 	}
 
 	listener, err := net.Listen("tcp", cfg.ListenAddress)
