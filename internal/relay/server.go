@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Miakapp/Miakapp-Server/internal/auth"
 	"github.com/Miakapp/Miakapp-Server/internal/config"
@@ -32,8 +33,13 @@ type Server struct {
 	cancel      context.CancelFunc
 	lifecycleMu sync.Mutex
 	closed      bool
-	connections sync.WaitGroup
-	nextSession atomic.Int64
+	draining    bool
+	live        map[*connection]struct{}
+
+	drainRetryAfterMs int64
+	drainReasonCode   int64
+	connections       sync.WaitGroup
+	nextSession       atomic.Int64
 }
 
 // New creates an isolated relay process state.
@@ -57,9 +63,84 @@ func New(cfg config.Config, verifier auth.Verifier, logger *slog.Logger) (*Serve
 		cancel:   cancel,
 	}
 	server.admission = newAdmissionController(cfg)
+	server.live = make(map[*connection]struct{})
 	server.homes = newHomeRegistry(server)
 	server.nextSession.Store(randomSessionSeed())
 	return server, nil
+}
+
+// Drain starts a graceful shutdown window, per RFC 0001 §6 and §12.
+//
+// Every authenticated connection receives GOAWAY and moves to DRAINING, where
+// the session layer already refuses new requests and accepts only the terminal
+// call frames that let an in-flight call finish. A connection that is still
+// open when the window closes is closed as a service restart, so a drain
+// always terminates even if a peer ignores GOAWAY.
+//
+// Draining is one-way: a drained relay never returns to serving new requests.
+// Connections that authenticate after the window opens are drained on arrival,
+// so no peer can slip past the announcement.
+func (server *Server) Drain(retryAfterMs int64, reasonCode int64, window time.Duration) {
+	server.lifecycleMu.Lock()
+	if server.closed || server.draining {
+		server.lifecycleMu.Unlock()
+		return
+	}
+	server.draining = true
+	server.drainRetryAfterMs = retryAfterMs
+	server.drainReasonCode = reasonCode
+	pending := make([]*connection, 0, len(server.live))
+	for connection := range server.live {
+		pending = append(pending, connection)
+	}
+	server.lifecycleMu.Unlock()
+
+	for _, connection := range pending {
+		connection.startDraining(retryAfterMs, reasonCode)
+	}
+
+	go func() {
+		select {
+		case <-time.After(window):
+		case <-server.context.Done():
+			return
+		}
+		server.lifecycleMu.Lock()
+		remaining := make([]*connection, 0, len(server.live))
+		for connection := range server.live {
+			remaining = append(remaining, connection)
+		}
+		server.lifecycleMu.Unlock()
+		for _, connection := range remaining {
+			connection.stop(int(websocket.StatusServiceRestart), "draining")
+		}
+	}()
+}
+
+// drainState reports whether a connection that has just authenticated must be
+// told to drain immediately rather than being served.
+func (server *Server) drainState() (bool, int64, int64) {
+	server.lifecycleMu.Lock()
+	defer server.lifecycleMu.Unlock()
+	return server.draining, server.drainRetryAfterMs, server.drainReasonCode
+}
+
+func (server *Server) trackConnection(connection *connection) bool {
+	server.lifecycleMu.Lock()
+	defer server.lifecycleMu.Unlock()
+	if server.closed {
+		return false
+	}
+	server.live[connection] = struct{}{}
+	server.connections.Add(1)
+	return true
+}
+
+func (server *Server) forgetConnection(connection *connection) {
+	server.lifecycleMu.Lock()
+	delete(server.live, connection)
+	server.lifecycleMu.Unlock()
+	server.connections.Done()
 }
 
 // Close starts relay shutdown and waits for owned connection goroutines.
@@ -146,15 +227,11 @@ func (server *Server) serveWebSocket(response http.ResponseWriter, request *http
 	socket.SetReadLimit(protocol.MaxFrameBytes)
 
 	connection := newConnection(server, socket, server.allocateSessionID(), request.RemoteAddr)
-	server.lifecycleMu.Lock()
-	if server.closed {
-		server.lifecycleMu.Unlock()
+	if !server.trackConnection(connection) {
 		_ = socket.CloseNow()
 		return
 	}
-	server.connections.Add(1)
-	server.lifecycleMu.Unlock()
-	defer server.connections.Done()
+	defer server.forgetConnection(connection)
 	connection.run(request.Context())
 }
 

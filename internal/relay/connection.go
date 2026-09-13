@@ -58,6 +58,7 @@ type connection struct {
 	closeOnce   sync.Once
 	fatalOnce   sync.Once
 	detachOnce  sync.Once
+	drainOnce   sync.Once
 
 	leaseMu         sync.Mutex
 	leaseTimer      *time.Timer
@@ -241,7 +242,16 @@ func (connection *connection) authenticate(frame protocol.Frame) *relayError {
 		return fatalError(codeUnavailable, true, "relay is shutting down", closeUnavailable)
 	}
 	connection.phase.Store(uint32(phaseActive))
-	return connection.home.attach(connection)
+	if err := connection.home.attach(connection); err != nil {
+		return err
+	}
+	// A peer that authenticated after the drain window opened is told to drain
+	// as soon as its bootstrap is on the wire, so no session outlives the
+	// announcement by arriving late.
+	if draining, retryAfterMs, reasonCode := connection.server.drainState(); draining {
+		connection.startDraining(retryAfterMs, reasonCode)
+	}
+	return nil
 }
 
 func (connection *connection) welcomeFrame(enrolled bool, coordinators []any) protocol.Frame {
@@ -774,6 +784,27 @@ func (connection *connection) available() bool {
 	return connection.bootstrapped.Load() &&
 		connectionPhase(connection.phase.Load()) == phaseActive &&
 		!connection.authLeaseExpired()
+}
+
+// startDraining announces the shutdown window to one authenticated peer.
+//
+// GOAWAY is queued before the phase changes so the announcement cannot be
+// refused by the draining rule it installs, and a peer that has not finished
+// its handshake is left alone: it has no session to drain, and the handshake
+// timeout or the drain deadline closes it.
+func (connection *connection) startDraining(retryAfterMs int64, reasonCode int64) {
+	connection.drainOnce.Do(func() {
+		if connectionPhase(connection.phase.Load()) != phaseActive {
+			return
+		}
+		if connection.enqueue(protocol.Frame{
+			Opcode:  protocol.OpcodeGoaway,
+			Payload: []any{retryAfterMs, reasonCode},
+		}, true) != nil {
+			return
+		}
+		connection.phase.CompareAndSwap(uint32(phaseActive), uint32(phaseDraining))
+	})
 }
 
 func frameCorrelation(frame protocol.Frame) int64 {
